@@ -21,6 +21,7 @@ import {
   type PendingApproval,
 } from "@/lib/agent-api";
 import {
+  getDocuments,
   uploadDocumentWithProgress,
   type ApiDocument,
 } from "@/lib/api";
@@ -112,6 +113,7 @@ export default function AgentWorkspace() {
         setMessages([]);
         setApprovals([]);
         setTools([]);
+        setAttachments([]);
       }
       return;
     }
@@ -128,12 +130,23 @@ export default function AgentWorkspace() {
     setTools([]);
     setError("");
 
-    Promise.all([getConversation(id), getConversationMessages(id)])
-      .then(([meta, history]) => {
+    Promise.all([
+      getConversation(id),
+      getConversationMessages(id),
+      getDocuments(),
+    ])
+      .then(([meta, history, documents]) => {
         if (cancelled) return;
 
         setConversation(meta);
-        setAttachments([]);
+        const documentsById = new Map(
+          documents.map((document) => [document.id, document]),
+        );
+        setAttachments(
+          meta.document_ids
+            .map((documentId) => documentsById.get(documentId))
+            .filter((document): document is ApiDocument => document !== undefined),
+        );
         setApprovals(history.pending_approvals);
         setMessages(
           history.messages.map((message) => ({
