@@ -1,0 +1,45 @@
+name: cognivault-ai
+
+# Copy backend/.env.example to backend/.env and fill in real values before
+# running this file. Secrets stay in that file and are never baked into images.
+services:
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Tesseract inside the container lives on PATH, so the Windows-specific
+      # TESSERACT_CMD from a local .env must be cleared here.
+      TESSERACT_CMD: ""
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health").status == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  uploads:
