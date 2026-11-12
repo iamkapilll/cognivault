@@ -6,9 +6,33 @@ import {
   useRef,
   useState,
 } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type {
+  FormEvent,
+  KeyboardEvent,
+} from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ArrowRight,
+  ArrowUp,
+  BookOpen,
+  Check,
+  ChevronDown,
+  CircleHelp,
+  FileSearch,
+  FileText,
+  Globe2,
+  LoaderCircle,
+  Paperclip,
+  Plus,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { useToast } from "@/components/Toast";
 import {
   approveAgentAction,
@@ -25,13 +49,6 @@ import {
   uploadDocumentWithProgress,
   type ApiDocument,
 } from "@/lib/api";
-import {
-  CheckIcon,
-  PaperclipIcon,
-  SendIcon,
-  SparklesIcon,
-  XIcon,
-} from "@/components/icons";
 
 type ChatMessage = {
   id: string;
@@ -40,35 +57,60 @@ type ChatMessage = {
   streaming?: boolean;
 };
 
+type ToolActivity = {
+  name: string;
+  status: "running" | "completed" | "cancelled";
+};
+
 const MAX_SIZE = 10 * 1024 * 1024;
 const EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"];
 
-const SUGGESTIONS = [
-  "Summarize my most recent indexed document.",
-  "Which documents mention payment terms?",
-  "Compare my two latest reports and list the differences.",
+const STARTERS: {
+  title: string;
+  detail: string;
+  prompt: string;
+  icon: LucideIcon;
+}[] = [
+  {
+    title: "Summarize a document",
+    detail: "Get the key ideas from a recent file",
+    prompt: "Summarize my most recent indexed document.",
+    icon: FileText,
+  },
+  {
+    title: "Find a specific detail",
+    detail: "Locate terms, dates, or decisions",
+    prompt: "Which documents mention payment terms or deadlines?",
+    icon: FileSearch,
+  },
+  {
+    title: "Compare documents",
+    detail: "Surface differences across reports",
+    prompt: "Compare my two most recent reports and list the differences.",
+    icon: BookOpen,
+  },
+  {
+    title: "Explore a topic",
+    detail: "Combine your files with web research",
+    prompt: "Research the latest information related to my documents.",
+    icon: Globe2,
+  },
 ];
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function MessageBody({ content }: { content: string }) {
-  const parts = content.split("```");
-
-  return (
-    <div className="prose-chat whitespace-pre-wrap break-words text-sm leading-7 text-[#d5dae6]">
-      {parts.map((part, index) =>
-        index % 2 === 1 ? (
-          <pre key={index}>
-            <code>{part.replace(/^[a-zA-Z0-9_-]+\n/, "")}</code>
-          </pre>
-        ) : (
-          <span key={index}>{part}</span>
-        ),
-      )}
-    </div>
-  );
+function documentStatusTone(document: ApiDocument): string {
+  if (
+    document.status.includes("fail") ||
+    document.index_status.includes("fail") ||
+    document.review_status.includes("needs")
+  ) {
+    return "text-amber-200";
+  }
+  if (document.index_status === "indexed") return "text-emerald-200";
+  return "text-[#9295a3]";
 }
 
 export default function AgentWorkspace() {
@@ -82,14 +124,15 @@ export default function AgentWorkspace() {
   const [status, setStatus] = useState<"idle" | "streaming" | "loading">(
     "idle",
   );
-
   const [attachments, setAttachments] = useState<ApiDocument[]>([]);
+  const [libraryDocuments, setLibraryDocuments] = useState<ApiDocument[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(true);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [contextOpen, setContextOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-
-  const [tools, setTools] = useState<string[]>([]);
+  const [tools, setTools] = useState<ToolActivity[]>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [error, setError] = useState("");
-
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
 
@@ -97,14 +140,39 @@ export default function AgentWorkspace() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const busy = status !== "idle";
+  const cParam = searchParams.get("c");
 
   useEffect(() => {
     conversationRef.current = conversation;
   }, [conversation]);
 
-  const cParam = searchParams.get("c");
+  useEffect(() => {
+    let cancelled = false;
+
+    getDocuments()
+      .then((documents) => {
+        if (!cancelled) setLibraryDocuments(documents);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          push(
+            loadError instanceof Error
+              ? loadError.message
+              : "Could not load your document library.",
+            "error",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLibraryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [push]);
 
   useEffect(() => {
     if (!cParam) {
@@ -114,15 +182,13 @@ export default function AgentWorkspace() {
         setApprovals([]);
         setTools([]);
         setAttachments([]);
+        setError("");
       }
       return;
     }
 
     const id = Number(cParam);
-
-    if (!Number.isFinite(id) || conversationRef.current?.id === id) {
-      return;
-    }
+    if (!Number.isFinite(id) || conversationRef.current?.id === id) return;
 
     let cancelled = false;
     setStatus("loading");
@@ -145,7 +211,10 @@ export default function AgentWorkspace() {
         setAttachments(
           meta.document_ids
             .map((documentId) => documentsById.get(documentId))
-            .filter((document): document is ApiDocument => document !== undefined),
+            .filter(
+              (document): document is ApiDocument =>
+                document !== undefined,
+            ),
         );
         setApprovals(history.pending_approvals);
         setMessages(
@@ -156,10 +225,12 @@ export default function AgentWorkspace() {
           })),
         );
       })
-      .catch((err) => {
+      .catch((loadError: unknown) => {
         if (!cancelled) {
           setError(
-            err instanceof Error ? err.message : "Could not load conversation",
+            loadError instanceof Error
+              ? loadError.message
+              : "Could not load conversation.",
           );
         }
       })
@@ -173,7 +244,7 @@ export default function AgentWorkspace() {
   }, [cParam]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, tools, approvals]);
 
   const notifyHistory = useCallback(() => {
@@ -184,44 +255,35 @@ export default function AgentWorkspace() {
     if (conversationRef.current) return conversationRef.current;
 
     const created = await createConversation(
-      attachments.map((item) => item.id),
+      attachments.map((document) => document.id),
     );
-
     setConversation(created);
     conversationRef.current = created;
     router.replace(`/agent?c=${created.id}`, { scroll: false });
     notifyHistory();
-
     return created;
   }
 
   async function send(text: string) {
     const message = text.trim();
-
-    if (!message || busy) return;
+    if (!message || busy || approvals.length > 0) return;
 
     setError("");
     setStatus("streaming");
-
+    setTools([]);
     const assistantId = newId();
 
     try {
       const active = await ensureConversation();
-      const documentIds = attachments.map((item) => item.id);
+      const documentIds = attachments.map((document) => document.id);
 
       setMessages((current) => [
         ...current,
         { id: newId(), role: "user", content: message },
-        {
-          id: assistantId,
-          role: "assistant",
-          content: "",
-          streaming: true,
-        },
+        { id: assistantId, role: "assistant", content: "", streaming: true },
       ]);
-
       setInput("");
-      setTools([]);
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -243,8 +305,10 @@ export default function AgentWorkspace() {
           onTool: (name, toolStatus) => {
             setTools((current) =>
               toolStatus === "started"
-                ? [...current, name]
-                : current.filter((item) => item !== name),
+                ? [...current, { name, status: "running" }]
+                : current.map((tool) =>
+                    tool.name === name ? { ...tool, status: "completed" } : tool,
+                  ),
             );
           },
           onApproval: (pending) => setApprovals(pending),
@@ -280,33 +344,39 @@ export default function AgentWorkspace() {
         },
         controller.signal,
       );
-    } catch (err) {
-      if ((err as Error).name === "AbortError") {
+    } catch (sendError: unknown) {
+      if (
+        sendError instanceof Error &&
+        sendError.name === "AbortError"
+      ) {
         setMessages((current) =>
           current.map((item) =>
-            item.id === assistantId
-              ? { ...item, streaming: false }
-              : item,
+            item.id === assistantId ? { ...item, streaming: false } : item,
           ),
         );
       } else {
-        setError(err instanceof Error ? err.message : "Request failed");
+        setError(
+          sendError instanceof Error ? sendError.message : "Request failed.",
+        );
       }
     } finally {
       abortRef.current = null;
       setStatus("idle");
-      setTools([]);
       notifyHistory();
     }
   }
 
-  function onSubmit(event: FormEvent) {
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void send(input);
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault();
       void send(input);
     }
@@ -315,22 +385,23 @@ export default function AgentWorkspace() {
   function stop() {
     abortRef.current?.abort();
     setStatus("idle");
-    setTools([]);
+    setTools((current) =>
+      current.map((tool) =>
+        tool.status === "running" ? { ...tool, status: "cancelled" } : tool,
+      ),
+    );
   }
 
   async function handleAttachment(file: File) {
     const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
-
     if (!EXTENSIONS.includes(extension)) {
       push("Attach a PDF, JPG, JPEG, or PNG file.", "error");
       return;
     }
-
     if (file.size > MAX_SIZE) {
       push("Maximum attachment size is 10 MB.", "error");
       return;
     }
-
     if (attachments.length >= 5) {
       push("You can attach up to 5 documents per message.", "error");
       return;
@@ -342,22 +413,43 @@ export default function AgentWorkspace() {
         file,
         setUploadProgress,
       );
-
       setAttachments((current) => [...current, document]);
+      setLibraryDocuments((current) => [
+        document,
+        ...current.filter((item) => item.id !== document.id),
+      ]);
       push(
         document.index_status === "indexed"
           ? `${document.filename} attached and indexed.`
           : `${document.filename} attached. Indexing needs a retry.`,
-        "success",
+        document.index_status === "indexed" ? "success" : "info",
       );
-    } catch (err) {
+    } catch (uploadError: unknown) {
       push(
-        err instanceof Error ? err.message : "Attachment upload failed",
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Attachment upload failed.",
         "error",
       );
     } finally {
       setUploadProgress(null);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function toggleLibraryDocument(document: ApiDocument) {
+    setAttachments((current) =>
+      current.some((item) => item.id === document.id)
+        ? current.filter((item) => item.id !== document.id)
+        : current.length < 5
+          ? [...current, document]
+          : current,
+    );
+    if (
+      attachments.length >= 5 &&
+      !attachments.some((item) => item.id === document.id)
+    ) {
+      push("You can attach up to 5 documents per message.", "info");
     }
   }
 
@@ -367,7 +459,6 @@ export default function AgentWorkspace() {
     try {
       setStatus("loading");
       const result = await approveAgentAction(conversation.id, decision);
-
       setApprovals(result.pending_approvals);
       setMessages((current) => [
         ...current,
@@ -376,16 +467,15 @@ export default function AgentWorkspace() {
           role: "assistant",
           content:
             result.answer ??
-            (decision === "approve"
-              ? "Action approved."
-              : "Action rejected."),
+            (decision === "approve" ? "Action approved." : "Action rejected."),
         },
       ]);
-
       notifyHistory();
-    } catch (err) {
+    } catch (approvalError: unknown) {
       setError(
-        err instanceof Error ? err.message : "Approval request failed",
+        approvalError instanceof Error
+          ? approvalError.message
+          : "Approval request failed.",
       );
     } finally {
       setStatus("idle");
@@ -394,7 +484,6 @@ export default function AgentWorkspace() {
 
   async function commitRename() {
     if (!conversation) return;
-
     const title = titleDraft.trim();
 
     if (!title || title === conversation.title) {
@@ -406,314 +495,778 @@ export default function AgentWorkspace() {
       const updated = await renameConversation(conversation.id, title);
       setConversation(updated);
       notifyHistory();
-    } catch (err) {
-      push(err instanceof Error ? err.message : "Rename failed", "error");
+    } catch (renameError: unknown) {
+      push(
+        renameError instanceof Error ? renameError.message : "Rename failed.",
+        "error",
+      );
     } finally {
       setRenaming(false);
     }
   }
 
+  async function copyMessage(content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      push("Response copied to clipboard.", "success");
+    } catch (copyError: unknown) {
+      push(
+        copyError instanceof Error ? copyError.message : "Could not copy response.",
+        "error",
+      );
+    }
+  }
+
+  const filteredDocuments = libraryDocuments.filter((document) =>
+    document.filename.toLocaleLowerCase().includes(libraryQuery.trim().toLocaleLowerCase()),
+  );
+  const activeAttachments = conversation ? attachments : [];
+  const contextClass = contextOpen
+    ? "absolute inset-0 z-20 flex w-full flex-col xl:static xl:z-auto xl:w-[318px] xl:shrink-0"
+    : "hidden xl:flex xl:w-[318px] xl:shrink-0 xl:flex-col";
+
   return (
-    <div className="flex h-[calc(100dvh-57px)] flex-col lg:h-dvh">
-      <header className="flex items-center justify-between gap-4 border-b border-[#161b26] px-5 py-4 md:px-8">
-        <div className="min-w-0 flex-1">
-          {renaming ? (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void commitRename();
-              }}
-              className="flex items-center gap-2"
-            >
-              <input
-                autoFocus
-                value={titleDraft}
-                onChange={(event) => setTitleDraft(event.target.value)}
-                maxLength={120}
-                aria-label="Conversation title"
-                className="focus-ring w-full max-w-md rounded-lg border border-[#2a3142] bg-[#0b0e17] px-3 py-1.5 text-sm"
-              />
-              <button
-                type="submit"
-                aria-label="Save title"
-                className="rounded-md p-1.5 text-emerald-300 hover:bg-emerald-500/10"
-              >
-                <CheckIcon width={16} height={16} />
-              </button>
+    <div className="relative flex h-[calc(100dvh-68px)] min-h-[520px] flex-col overflow-hidden bg-[#0b0d12]">
+      <div className="flex min-h-0 flex-1">
+        <section className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-[62px] shrink-0 items-center justify-between gap-3 border-b border-white/[0.065] px-4 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="hidden h-8 w-8 items-center justify-center rounded-lg border border-[#9d8eff]/15 bg-[#8b7cf2]/[0.09] text-[#b8adff] sm:flex">
+                <Sparkles size={16} strokeWidth={1.7} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[#eae8f1]">
+                  {renaming ? (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void commitRename();
+                      }}
+                      className="flex items-center gap-2"
+                    >
+                      <input
+                        autoFocus
+                        value={titleDraft}
+                        onChange={(event) => setTitleDraft(event.target.value)}
+                        maxLength={120}
+                        aria-label="Conversation title"
+                        className="control-input h-8 w-full max-w-sm rounded-lg px-2 text-sm"
+                      />
+                      <button
+                        type="submit"
+                        aria-label="Save title"
+                        className="focus-ring rounded-md p-1.5 text-emerald-300 hover:bg-emerald-500/10"
+                      >
+                        <Check size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel rename"
+                        onClick={() => setRenaming(false)}
+                        className="focus-ring rounded-md p-1.5 text-[#8b8d9a] hover:bg-white/[0.05]"
+                      >
+                        <X size={15} />
+                      </button>
+                    </form>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!conversation) return;
+                        setTitleDraft(conversation.title);
+                        setRenaming(true);
+                      }}
+                      title={conversation ? "Rename conversation" : undefined}
+                      className="focus-ring max-w-full truncate rounded text-left hover:text-white"
+                    >
+                      {conversation?.title ?? "New research session"}
+                    </button>
+                  )}
+                </p>
+                <p className="mt-0.5 truncate text-[10px] text-[#737581]">
+                  {attachments.length
+                    ? `${attachments.length} document${attachments.length === 1 ? "" : "s"} in context`
+                    : "Private research across your documents and the web"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-2.5 py-1.5 text-[10px] text-[#999ba7] sm:inline-flex">
+                <ShieldCheck size={12} className="text-emerald-300/80" />
+                Private workspace
+              </span>
               <button
                 type="button"
-                aria-label="Cancel rename"
-                onClick={() => setRenaming(false)}
-                className="rounded-md p-1.5 text-[#8b93a7] hover:bg-[#161b26]"
+                onClick={() => setContextOpen(true)}
+                aria-label="Open document context"
+                className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-2.5 text-[11px] text-[#b8b8c5] transition hover:border-white/[0.15] hover:text-white xl:hidden"
               >
-                <XIcon width={16} height={16} />
+                <BookOpen size={14} />
+                Sources
               </button>
-            </form>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                if (!conversation) return;
-                setTitleDraft(conversation.title);
-                setRenaming(true);
-              }}
-              className="focus-ring max-w-full truncate rounded text-left text-base font-medium hover:text-indigo-300"
-              title={conversation ? "Rename conversation" : undefined}
-            >
-              {conversation?.title ?? "New conversation"}
-            </button>
-          )}
-
-          <p className="mt-0.5 text-[11px] text-[#6f7890]">
-            {attachments.length > 0
-              ? `${attachments.length} document${attachments.length > 1 ? "s" : ""} in context`
-              : "Documents, OCR, RAG, web research and approvals"}
-          </p>
-        </div>
-
-        {busy && (
-          <button
-            type="button"
-            onClick={stop}
-            className="focus-ring rounded-lg border border-[#2a3142] px-3 py-1.5 text-xs text-[#c7cddd] hover:border-red-500/40 hover:text-red-300"
-          >
-            Stop
-          </button>
-        )}
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-8">
-        {status === "loading" ? (
-          <div className="mx-auto max-w-3xl space-y-4">
-            {[0, 1, 2].map((item) => (
-              <div key={item} className="skeleton h-24 rounded-2xl" />
-            ))}
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="mx-auto flex max-w-2xl flex-col items-center pt-10 text-center">
-            <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-indigo-300 ring-1 ring-indigo-500/30">
-              <SparklesIcon width={26} height={26} />
-            </div>
-
-            <h1 className="text-2xl font-semibold tracking-tight">
-              What should we research?
-            </h1>
-            <p className="mt-2 max-w-md text-sm leading-6 text-[#8b93a7]">
-              Ask about your indexed documents, search the web, compare files,
-              or request a deletion that needs your approval.
-            </p>
-
-            <div className="mt-8 grid w-full gap-3 sm:grid-cols-3">
-              {SUGGESTIONS.map((suggestion) => (
+              {busy && (
                 <button
-                  key={suggestion}
                   type="button"
-                  onClick={() => void send(suggestion)}
-                  className="focus-ring rounded-xl border border-[#1e2433] bg-[#0b0e17] p-4 text-left text-xs leading-5 text-[#9aa3b8] transition hover:border-indigo-500/40 hover:text-white"
+                  onClick={stop}
+                  className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] px-2.5 text-[11px] text-[#c4c2cd] hover:border-red-400/30 hover:text-red-200"
                 >
-                  {suggestion}
+                  <span className="h-1.5 w-1.5 rounded-sm bg-red-300" />
+                  Stop
                 </button>
-              ))}
+              )}
             </div>
-          </div>
-        ) : (
-          <div className="mx-auto max-w-3xl space-y-6">
-            {messages.map((message) =>
-              message.role === "user" ? (
-                <div key={message.id} className="flex justify-end">
-                  <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-indigo-600 to-violet-600 px-4 py-3 text-sm leading-7 text-white shadow-lg shadow-indigo-950/30">
-                    <MessageBody content={message.content} />
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth px-4 py-6 sm:px-6 lg:px-8">
+            {status === "loading" && messages.length === 0 ? (
+              <div className="mx-auto max-w-3xl space-y-5 pt-4">
+                <div className="skeleton h-20 rounded-2xl" />
+                <div className="skeleton ml-auto h-16 max-w-[70%] rounded-2xl" />
+                <div className="skeleton h-28 rounded-2xl" />
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="mx-auto w-full max-w-[860px] pb-6 pt-5 sm:pt-8">
+                <div className="mb-7 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-[#a194ff]/15 bg-[#8c7cf2]/[0.075] px-3 py-1.5 text-[10px] font-medium tracking-[0.03em] text-[#c0b6ff]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#a89aff]" />
+                    Cognivault research workspace
+                  </span>
+                  <span className="text-[10px] text-[#747581]">
+                    {libraryLoading
+                      ? "Loading your library…"
+                      : `${libraryDocuments.length} ${libraryDocuments.length === 1 ? "document" : "documents"} available`}
+                  </span>
+                </div>
+
+                <div className="relative overflow-hidden rounded-[26px] border border-white/[0.08] bg-[linear-gradient(125deg,#151622_0%,#11131b_57%,#12111a_100%)] p-5 shadow-[0_26px_75px_-52px_rgba(0,0,0,0.95)] sm:p-8 lg:p-9">
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -right-20 -top-32 h-[330px] w-[330px] rounded-full border border-[#a69aff]/[0.08]"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -right-8 -top-20 h-[245px] w-[245px] rounded-full border border-[#a69aff]/[0.07]"
+                  />
+                  <div className="relative max-w-[640px]">
+                    <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-[14px] border border-[#b2a7ff]/20 bg-[#8b7bf0]/[0.11] text-[#c2b8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                      <Sparkles size={20} strokeWidth={1.6} />
+                    </div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9c91df]">
+                      Your thinking partner
+                    </p>
+                    <h1 className="mt-2 text-[31px] font-semibold leading-[1.08] tracking-[-0.045em] text-[#f1eff8] sm:text-[38px]">
+                      Make sense of
+                      <br className="hidden sm:block" /> what you know.
+                    </h1>
+                    <p className="mt-3 max-w-[530px] text-[13px] leading-6 text-[#a0a1ae] sm:text-[14px]">
+                      Ask a question, connect the dots across your files, or
+                      explore a topic. Your documents stay close to the answer.
+                    </p>
+                    <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-[#7d7e8b]">
+                      <span className="inline-flex items-center gap-1.5">
+                        <FileSearch size={13} className="text-[#aaa0eb]" />
+                        Document-grounded
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Globe2 size={13} className="text-[#aaa0eb]" />
+                        Web research
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <ShieldCheck size={13} className="text-emerald-300/80" />
+                        Human-approved actions
+                      </span>
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <div key={message.id} className="flex gap-3">
-                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#161b29] text-[11px] font-semibold text-indigo-300 ring-1 ring-[#2a3142]">
-                    AI
-                  </div>
 
-                  <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-[#1e2433] bg-[#0b0e17] px-4 py-3">
-                    {message.content ? (
-                      <MessageBody content={message.content} />
-                    ) : (
-                      <div className="flex items-center gap-2 py-1 text-xs text-[#8b93a7]">
-                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-500/30 border-t-indigo-400" />
-                        Thinking…
+                <div className="mb-3 mt-8 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-[#777987]">
+                      A good place to begin
+                    </p>
+                    <h2 className="mt-1 text-[15px] font-semibold tracking-[-0.02em] text-[#e5e3ec]">
+                      Start with a question
+                    </h2>
+                  </div>
+                  <span className="hidden text-[10px] text-[#6f717e] sm:block">
+                    Choose a prompt or write your own
+                  </span>
+                </div>
+
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {STARTERS.map(({ title, detail, prompt, icon: Icon }) => (
+                    <button
+                      key={title}
+                      type="button"
+                      onClick={() => void send(prompt)}
+                      disabled={busy}
+                      className="focus-ring group flex min-h-[82px] items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#11131a] p-3.5 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[#9e90ff]/25 hover:bg-[#171722] disabled:cursor-not-allowed disabled:opacity-55 sm:p-4"
+                    >
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.035] text-[#b8b0ed] transition group-hover:border-[#9c8fff]/20 group-hover:bg-[#8a7aec]/[0.1] group-hover:text-[#d4cdff]">
+                        <Icon size={17} strokeWidth={1.7} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[12px] font-semibold text-[#e4e2eb]">
+                          {title}
+                        </span>
+                        <span className="mt-1 block text-[10px] leading-4 text-[#838590]">
+                          {detail}
+                        </span>
+                      </span>
+                      <ArrowRight
+                        size={14}
+                        className="shrink-0 text-[#636572] transition group-hover:translate-x-0.5 group-hover:text-[#b6acff]"
+                      />
+                    </button>
+                  ))}
+                </div>
+
+                {attachments.length > 0 && (
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {attachments.map((document) => (
+                      <span
+                        key={document.id}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#9d8eff]/15 bg-[#8c7cf2]/[0.06] px-2.5 py-1.5 text-[10px] text-[#d0caff]"
+                      >
+                        <FileText size={13} />
+                        {document.filename}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mx-auto max-w-[780px] space-y-7 pb-5">
+                {messages.map((message) =>
+                  message.role === "user" ? (
+                    <article
+                      key={message.id}
+                      className="animate-fade-up flex flex-col items-end gap-2"
+                    >
+                      <span className="px-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[#737581]">
+                        You
+                      </span>
+                      <div className="max-w-[88%] rounded-2xl rounded-tr-md border border-[#a195ff]/15 bg-[#252333] px-4 py-3.5 text-[#efedf5] sm:max-w-[78%] sm:px-5">
+                        <MarkdownContent content={message.content} />
                       </div>
-                    )}
+                    </article>
+                  ) : (
+                    <article
+                      key={message.id}
+                      className="animate-fade-up flex gap-3 sm:gap-4"
+                    >
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[#a497ff]/20 bg-[#8c7cf2]/[0.1] text-[#c6bdff]">
+                        <Sparkles size={15} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="text-[11px] font-semibold tracking-[0.01em] text-[#dfdce9]">
+                            Cognivault
+                          </span>
+                          {!message.streaming && message.content && (
+                            <button
+                              type="button"
+                              onClick={() => void copyMessage(message.content)}
+                              className="focus-ring rounded-md px-2 py-1 text-[10px] text-[#777987] transition hover:bg-white/[0.05] hover:text-[#cfccda]"
+                            >
+                              Copy response
+                            </button>
+                          )}
+                        </div>
+                        {message.content ? (
+                          <MarkdownContent content={message.content} />
+                        ) : (
+                          <div
+                            role="status"
+                            className="inline-flex items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 text-[11px] text-[#a0a1ae]"
+                          >
+                            <LoaderCircle
+                              size={14}
+                              className="animate-spin text-[#b0a5ff]"
+                            />
+                            Thinking through your sources…
+                          </div>
+                        )}
+                        {message.streaming && message.content && (
+                          <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded bg-[#aa9eff] align-middle" />
+                        )}
+                      </div>
+                    </article>
+                  ),
+                )}
 
-                    {message.streaming && message.content && (
-                      <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-indigo-400 align-middle" />
-                    )}
+                {tools.length > 0 && (
+                  <section
+                    aria-label="Agent activity"
+                    className="ml-11 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3"
+                  >
+                    <p className="mb-2 flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#777987]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#a89aff]" />
+                      Research activity
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {tools.map((tool, index) => (
+                        <span
+                          key={`${tool.name}-${index}`}
+                          className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] ${
+                            tool.status === "running"
+                              ? "border-[#9d8eff]/20 bg-[#8c7cf2]/[0.07] text-[#c5bcff]"
+                              : tool.status === "completed"
+                                ? "border-emerald-400/15 bg-emerald-400/[0.045] text-emerald-200/85"
+                                : "border-white/[0.08] bg-white/[0.025] text-[#989aa6]"
+                          }`}
+                        >
+                          {tool.status === "running" ? (
+                            <LoaderCircle size={11} className="animate-spin" />
+                          ) : tool.status === "completed" ? (
+                            <Check size={11} />
+                          ) : (
+                            <X size={11} />
+                          )}
+                          {tool.name.replaceAll("_", " ")}
+                          <span className="text-current/60">
+                            {tool.status === "running"
+                              ? "working"
+                              : tool.status === "completed"
+                                ? "done"
+                                : "stopped"}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {approvals.map((approval) => (
+                  <section
+                    key={`${approval.document_id}-${approval.action}`}
+                    className="ml-11 rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-4 sm:p-5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-300/15 bg-amber-300/[0.07] text-amber-200">
+                        <CircleHelp size={16} />
+                      </span>
+                      <div className="min-w-0">
+                        <h2 className="text-[13px] font-semibold text-amber-100">
+                          Your approval is needed
+                        </h2>
+                        <p className="mt-1 text-[11px] leading-5 text-amber-100/70">
+                          {approval.message}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2 pl-11">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void decide("approve")}
+                        className="focus-ring min-h-9 rounded-lg border border-red-300/20 bg-red-400/[0.1] px-3 text-[11px] font-medium text-red-100 transition hover:bg-red-400/[0.17] disabled:opacity-50"
+                      >
+                        Approve deletion
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void decide("reject")}
+                        className="button-secondary focus-ring min-h-9 rounded-lg px-3 text-[11px] disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </section>
+                ))}
+                <div ref={bottomRef} />
+              </div>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="mx-auto mt-5 flex max-w-[780px] items-start justify-between gap-3 rounded-xl border border-red-400/20 bg-red-400/[0.055] px-4 py-3 text-[11px] text-red-100"
+              >
+                <span className="leading-5">{error}</span>
+                <button
+                  type="button"
+                  onClick={() => setError("")}
+                  aria-label="Dismiss error"
+                  className="focus-ring rounded-md p-1 text-red-100/65 hover:bg-red-300/10 hover:text-red-50"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="shrink-0 border-t border-white/[0.065] bg-[#0b0d12]/95 px-3 pb-3 pt-3 backdrop-blur-xl sm:px-6 sm:pb-4">
+            <form onSubmit={onSubmit} className="mx-auto max-w-[780px]">
+              {attachments.length > 0 && (
+                <div className="mb-2.5 flex flex-wrap gap-2">
+                  {attachments.map((document) => (
+                    <span
+                      key={document.id}
+                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] py-1.5 pl-2.5 pr-1.5 text-[10px] text-[#c8c6d1]"
+                    >
+                      <FileText size={13} className="shrink-0 text-[#aaa0e8]" />
+                      <span className="max-w-[210px] truncate">
+                        {document.filename}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${document.filename}`}
+                        onClick={() =>
+                          setAttachments((current) =>
+                            current.filter((item) => item.id !== document.id),
+                          )
+                        }
+                        className="focus-ring rounded p-1 text-[#777987] hover:bg-white/[0.07] hover:text-white"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {uploadProgress !== null && (
+                <div className="mb-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                  <div className="h-1 overflow-hidden rounded-full bg-white/[0.08]">
+                    <div
+                      className="h-full rounded-full bg-[#a092ff] transition-all"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-[9px] text-[#8e8f9b]">
+                    {uploadProgress < 100
+                      ? `Uploading document · ${uploadProgress}%`
+                      : "Extracting and indexing…"}
+                  </p>
+                </div>
+              )}
+
+              <div className="group rounded-[20px] border border-white/[0.1] bg-[#15171f] p-2 shadow-[0_14px_44px_-30px_rgba(0,0,0,0.95)] transition focus-within:border-[#a396ff]/35 focus-within:bg-[#171923] hover:border-white/[0.16]">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(event) => {
+                    setInput(event.target.value);
+                    event.currentTarget.style.height = "auto";
+                    event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 160)}px`;
+                  }}
+                  onKeyDown={onKeyDown}
+                  rows={1}
+                  maxLength={4000}
+                  disabled={busy || approvals.length > 0}
+                  placeholder={
+                    approvals.length > 0
+                      ? "Resolve the approval above to continue…"
+                      : "Ask anything about your documents or a topic…"
+                  }
+                  aria-label="Message"
+                  className="max-h-40 min-h-[42px] w-full resize-none bg-transparent px-3 py-2 text-[13px] leading-6 text-[#eceaf3] outline-none placeholder:text-[#777987] disabled:opacity-60"
+                />
+                <div className="flex items-center justify-between gap-2 border-t border-white/[0.055] px-1 pt-2">
+                  <div className="flex items-center gap-1">
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void handleAttachment(file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      disabled={
+                        busy ||
+                        uploadProgress !== null ||
+                        attachments.length >= 5
+                      }
+                      aria-label="Attach a document"
+                      title="Attach a PDF or image"
+                      className="focus-ring inline-flex h-8 items-center gap-2 rounded-lg px-2 text-[10px] text-[#999ba7] transition hover:bg-white/[0.055] hover:text-[#e9e7ef] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Paperclip size={14} />
+                      <span className="hidden sm:inline">Attach</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setContextOpen(true)}
+                      className="focus-ring hidden h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] text-[#858794] transition hover:bg-white/[0.055] hover:text-[#e9e7ef] xl:inline-flex"
+                    >
+                      <BookOpen size={13} />
+                      {attachments.length
+                        ? `${attachments.length} in context`
+                        : "Add sources"}
+                      <ChevronDown size={11} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="hidden text-[9px] text-[#686a77] sm:inline">
+                      <kbd className="rounded border border-white/[0.08] bg-white/[0.025] px-1 py-0.5 font-sans">
+                        Enter
+                      </kbd>{" "}
+                      to send · Shift + Enter for a new line
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={
+                        !input.trim() || busy || approvals.length > 0
+                      }
+                      aria-label="Send message"
+                      className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#c0b5ff]/15 bg-[#9687fa] text-[#171522] shadow-[0_5px_16px_-10px_rgba(164,150,255,0.8)] transition hover:bg-[#b2a7ff] disabled:cursor-not-allowed disabled:border-white/[0.05] disabled:bg-white/[0.07] disabled:text-[#626470] disabled:shadow-none"
+                    >
+                      <ArrowUp size={16} strokeWidth={2.2} />
+                    </button>
                   </div>
                 </div>
-              ),
-            )}
-
-            {tools.length > 0 && (
-              <div className="flex flex-wrap gap-2 pl-11">
-                {tools.map((tool) => (
-                  <span
-                    key={tool}
-                    className="flex items-center gap-2 rounded-full border border-indigo-500/25 bg-indigo-500/10 px-3 py-1 text-[11px] text-indigo-200"
-                  >
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-400" />
-                    {tool.replaceAll("_", " ")}
-                  </span>
-                ))}
               </div>
-            )}
 
-            {approvals.map((approval) => (
-              <div
-                key={`${approval.document_id}-${approval.action}`}
-                className="ml-11 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
-              >
-                <p className="text-sm font-medium text-amber-200">
-                  Approval required
-                </p>
-                <p className="mt-1 text-xs leading-6 text-amber-100/80">
-                  {approval.message}
-                </p>
-
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void decide("approve")}
-                    className="focus-ring rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                  >
-                    Approve deletion
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void decide("reject")}
-                    className="focus-ring rounded-lg border border-[#2a3142] px-3 py-1.5 text-xs disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ))}
-
-            <div ref={bottomRef} />
+              <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[9px] leading-4 text-[#686a77]">
+                <ShieldCheck size={11} className="shrink-0" />
+                Verify important information. Destructive actions always need your approval.
+              </p>
+            </form>
           </div>
-        )}
+        </section>
 
-        {error && (
-          <div className="mx-auto mt-4 flex max-w-3xl items-start justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-200">
-            <span className="leading-6">{error}</span>
-            <button
-              type="button"
-              onClick={() => setError("")}
-              aria-label="Dismiss error"
-              className="rounded p-1 hover:bg-red-500/10"
-            >
-              <XIcon width={14} height={14} />
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="border-t border-[#161b26] bg-[#07080d]/90 px-4 py-4 backdrop-blur md:px-8">
-        <form onSubmit={onSubmit} className="mx-auto max-w-3xl">
-          {attachments.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {attachments.map((document) => (
-                <span
-                  key={document.id}
-                  className="flex items-center gap-2 rounded-full border border-[#2a3142] bg-[#11151f] px-3 py-1 text-[11px] text-[#c7cddd]"
-                >
-                  <PaperclipIcon width={12} height={12} />
-                  <span className="max-w-[180px] truncate">
-                    {document.filename}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${document.filename}`}
-                    onClick={() =>
-                      setAttachments((current) =>
-                        current.filter((item) => item.id !== document.id),
-                      )
-                    }
-                    className="text-[#6f7890] hover:text-red-300"
-                  >
-                    <XIcon width={12} height={12} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          {uploadProgress !== null && (
-            <div className="mb-2">
-              <div className="h-1 w-full overflow-hidden rounded-full bg-[#1a2030]">
-                <div
-                  className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-              <p className="mt-1 text-[10px] text-[#6f7890]">
-                {uploadProgress < 100
-                  ? `Uploading… ${uploadProgress}%`
-                  : "Extracting and indexing…"}
+        <aside
+          aria-label="Document context"
+          className={`${contextClass} border-l border-white/[0.065] bg-[#0e1016]`}
+        >
+          <div className="flex min-h-[62px] shrink-0 items-center justify-between border-b border-white/[0.065] px-4">
+            <div>
+              <p className="text-[12px] font-semibold text-[#e4e2eb]">
+                Source context
+              </p>
+              <p className="mt-0.5 text-[10px] text-[#747682]">
+                Files the assistant can reference
               </p>
             </div>
-          )}
-
-          <div className="flex items-end gap-2 rounded-2xl border border-[#1e2433] bg-[#0b0e17] p-2 focus-within:border-indigo-500/50">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".pdf,.jpg,.jpeg,.png"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void handleAttachment(file);
-              }}
-            />
-
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
-              disabled={uploadProgress !== null || attachments.length >= 5}
-              aria-label="Attach a document"
-              className="focus-ring rounded-xl p-2.5 text-[#8b93a7] transition hover:bg-[#161b26] hover:text-white disabled:opacity-40"
+              onClick={() => setContextOpen(false)}
+              aria-label="Close document context"
+              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#888a97] transition hover:bg-white/[0.05] hover:text-white xl:hidden"
             >
-              <PaperclipIcon />
+              <X size={15} />
             </button>
-
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={onKeyDown}
-              rows={1}
-              maxLength={4000}
-              disabled={busy || approvals.length > 0}
-              placeholder={
-                approvals.length > 0
-                  ? "Resolve the approval above to continue…"
-                  : "Ask about your documents…"
-              }
-              aria-label="Message"
-              className="max-h-40 min-h-[42px] flex-1 resize-none bg-transparent px-1 py-2.5 text-sm leading-6 outline-none placeholder:text-[#5d6577] disabled:opacity-60"
-            />
-
-            <button
-              type="submit"
-              disabled={!input.trim() || busy || approvals.length > 0}
-              aria-label="Send message"
-              className="focus-ring rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 p-2.5 text-white transition hover:brightness-110 disabled:opacity-40"
-            >
-              <SendIcon />
-            </button>
+            <span className="hidden h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.025] text-[#9a92d3] xl:flex">
+              <BookOpen size={15} />
+            </span>
           </div>
 
-          <p className="mt-2 text-center text-[10px] text-[#5d6577]">
-            AI output can be wrong. Verify important information. Deletions
-            always require approval.
-          </p>
-        </form>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="rounded-xl border border-[#a296ff]/13 bg-[#8c7cf2]/[0.055] p-3.5">
+              <div className="flex items-start gap-2.5">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#8c7cf2]/[0.11] text-[#beb4ff]">
+                  <ShieldCheck size={14} />
+                </span>
+                <div>
+                  <p className="text-[11px] font-medium text-[#d9d4f1]">
+                    Private by design
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-[#8f8c9f]">
+                    Attached files narrow document search. Without an attachment,
+                    the assistant can search your indexed library.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {conversation ? (
+              <section className="mt-6">
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#858692]">
+                    In this conversation
+                  </h2>
+                  <span className="text-[10px] text-[#666875]">
+                    {activeAttachments.length}
+                  </span>
+                </div>
+                {activeAttachments.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-white/[0.09] px-3 py-4 text-[10px] leading-5 text-[#777985]">
+                    No files were attached to this conversation.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {activeAttachments.map((document) => (
+                      <div
+                        key={document.id}
+                        className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.035] text-[#b1a8ef]">
+                          <FileText size={15} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[10px] font-medium text-[#d1cfda]">
+                            {document.filename}
+                          </span>
+                          <span
+                            className={`mt-1 block text-[9px] capitalize ${documentStatusTone(document)}`}
+                          >
+                            {document.index_status.replaceAll("_", " ")}
+                            {document.page_count
+                              ? ` · ${document.page_count} pages`
+                              : ""}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Link
+                  href="/"
+                  className="focus-ring mt-3 inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] text-[#a99fff] transition hover:bg-white/[0.04] hover:text-[#d6d0ff]"
+                >
+                  Manage documents
+                  <ArrowRight size={12} />
+                </Link>
+              </section>
+            ) : (
+              <section className="mt-6">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#858692]">
+                      Your library
+                    </h2>
+                    <p className="mt-1 text-[9px] text-[#686a77]">
+                      Select up to five files for this chat
+                    </p>
+                  </div>
+                  <span className="rounded-md border border-white/[0.07] bg-white/[0.025] px-2 py-1 text-[9px] text-[#8b8d99]">
+                    {attachments.length}/5
+                  </span>
+                </div>
+
+                <label className="relative mt-3 block">
+                  <Search
+                    size={13}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#686a77]"
+                  />
+                  <input
+                    type="search"
+                    value={libraryQuery}
+                    onChange={(event) => setLibraryQuery(event.target.value)}
+                    aria-label="Search your documents"
+                    placeholder="Search documents"
+                    className="control-input h-9 w-full rounded-lg pl-8 pr-2 text-[10px]"
+                  />
+                </label>
+
+                <div className="mt-2 space-y-1.5">
+                  {libraryLoading ? (
+                    [0, 1, 2].map((item) => (
+                      <div key={item} className="skeleton h-[54px] rounded-xl" />
+                    ))
+                  ) : filteredDocuments.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-white/[0.09] px-3 py-5 text-center">
+                      <FileText size={17} className="mx-auto text-[#777987]" />
+                      <p className="mt-2 text-[10px] text-[#a5a5b0]">
+                        {libraryDocuments.length
+                          ? "No files match your search."
+                          : "Your library is empty."}
+                      </p>
+                      {!libraryDocuments.length && (
+                        <Link
+                          href="/"
+                          className="focus-ring mt-2 inline-flex items-center gap-1 text-[10px] text-[#b5aaff] hover:text-white"
+                        >
+                          Upload a document
+                          <ArrowRight size={11} />
+                        </Link>
+                      )}
+                    </div>
+                  ) : (
+                    filteredDocuments.slice(0, 8).map((document) => {
+                      const selected = attachments.some(
+                        (item) => item.id === document.id,
+                      );
+                      return (
+                        <button
+                          key={document.id}
+                          type="button"
+                          onClick={() => toggleLibraryDocument(document)}
+                          aria-pressed={selected}
+                          className={`focus-ring flex w-full items-center gap-2.5 rounded-xl border p-2.5 text-left transition ${
+                            selected
+                              ? "border-[#a295ff]/22 bg-[#8c7cf2]/[0.07]"
+                              : "border-white/[0.06] bg-white/[0.018] hover:border-white/[0.12] hover:bg-white/[0.035]"
+                          }`}
+                        >
+                          <span
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                              selected
+                                ? "bg-[#8c7cf2]/[0.13] text-[#c2b8ff]"
+                                : "bg-white/[0.035] text-[#9899a5]"
+                            }`}
+                          >
+                            <FileText size={14} />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[10px] font-medium text-[#d2d0db]">
+                              {document.filename}
+                            </span>
+                            <span
+                              className={`mt-1 block text-[9px] capitalize ${documentStatusTone(document)}`}
+                            >
+                              {document.index_status.replaceAll("_", " ")}
+                            </span>
+                          </span>
+                          <span
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                              selected
+                                ? "border-[#b3a8ff]/40 bg-[#8c7cf2]/20 text-[#d8d1ff]"
+                                : "border-white/[0.1] text-transparent"
+                            }`}
+                          >
+                            {selected ? <Check size={12} /> : <Plus size={12} />}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                {filteredDocuments.length > 8 && (
+                  <p className="mt-2 text-center text-[9px] text-[#6f717d]">
+                    Showing 8 of {filteredDocuments.length} files. Search to find the rest.
+                  </p>
+                )}
+              </section>
+            )}
+
+            <section className="mt-7 border-t border-white/[0.06] pt-4">
+              <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#858692]">
+                Research tools
+              </h2>
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-[#999ba7]">
+                  <FileSearch size={13} className="text-[#aaa0eb]" />
+                  Search your indexed files
+                </div>
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-[#999ba7]">
+                  <Globe2 size={13} className="text-[#aaa0eb]" />
+                  Explore the web
+                </div>
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-[#999ba7]">
+                  <ShieldCheck size={13} className="text-emerald-300/80" />
+                  Approve sensitive actions
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="border-t border-white/[0.06] px-4 py-3">
+            <p className="text-[9px] leading-4 text-[#666875]">
+              Answers can be wrong. Check important claims against the source.
+            </p>
+          </div>
+        </aside>
       </div>
     </div>
   );

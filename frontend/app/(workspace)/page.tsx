@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Clock3,
   FileText,
+  FileImage,
   Files,
   Layers3,
   RotateCw,
@@ -497,9 +498,9 @@ export default function DocumentsPage() {
         </div>
 
         {loading ? (
-          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          <div className="space-y-2">
             {[0, 1, 2].map((item) => (
-              <div key={item} className="skeleton h-52 rounded-2xl" />
+              <div key={item} className="skeleton h-[72px] rounded-xl" />
             ))}
           </div>
         ) : documents.length === 0 && (query || statusFilter) ? (
@@ -535,57 +536,66 @@ export default function DocumentsPage() {
             </button>
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          <div className="overflow-hidden rounded-[20px] border border-white/[0.075] bg-[#101117]/90">
+            <div className="hidden grid-cols-[minmax(0,2fr)_minmax(100px,0.8fr)_minmax(150px,1.2fr)_70px_120px] items-center gap-4 border-b border-white/[0.065] bg-white/[0.018] px-5 py-3 text-[9px] font-semibold uppercase tracking-[0.13em] text-[#747581] lg:grid">
+              <span>Document</span>
+              <span>Type</span>
+              <span>Processing</span>
+              <span>Pages</span>
+              <span className="text-right">Actions</span>
+            </div>
             {documents.map((document) => (
               <article
                 key={document.id}
-                className="group flex min-h-[210px] flex-col rounded-[20px] border border-white/[0.07] bg-[linear-gradient(145deg,rgba(22,23,31,0.96),rgba(14,15,21,0.98))] p-4 shadow-[0_14px_42px_-36px_rgba(0,0,0,0.9)] transition duration-200 hover:-translate-y-0.5 hover:border-[#9588e8]/25 hover:shadow-[0_20px_48px_-34px_rgba(93,77,201,0.28)] sm:p-5"
+                className="group grid gap-3 border-b border-white/[0.055] px-4 py-4 transition-colors last:border-b-0 hover:bg-white/[0.025] sm:px-5 lg:grid-cols-[minmax(0,2fr)_minmax(100px,0.8fr)_minmax(150px,1.2fr)_70px_120px] lg:items-center lg:gap-4"
               >
-                <div className="flex items-start gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#9a8cff]/15 bg-[#8071e7]/[0.09] text-[#b7abff]">
-                    <FileText size={18} strokeWidth={1.7} />
+                    {/\.jpe?g$|\.png$/i.test(document.filename) ? (
+                      <FileImage size={18} strokeWidth={1.7} />
+                    ) : (
+                      <FileText size={18} strokeWidth={1.7} />
+                    )}
                   </span>
-                  <div className="min-w-0 flex-1 pt-0.5">
+                  <div className="min-w-0">
                     <h3
-                      className="truncate text-[13px] font-semibold text-[#e9e7f0]"
+                      className="truncate text-[12px] font-semibold text-[#e9e7f0] sm:text-[13px]"
                       title={document.filename}
                     >
                       {document.filename}
                     </h3>
-                    <p className="mt-1 text-[10px] text-[#777985]">
-                      {formatDate(document.created_at)}
+                    <p className="mt-1 truncate text-[10px] text-[#777985]">
+                      Added {formatDate(document.created_at)}
+                      {document.extraction_method
+                        ? ` · ${document.extraction_method}`
+                        : ""}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-lg border border-white/[0.07] bg-black/15 px-2 py-1 text-[9px] font-medium uppercase tracking-[0.08em] text-[#a5a4b0]">
+                </div>
+
+                <div className="hidden min-w-0 lg:block">
+                  <span className="inline-flex max-w-full truncate rounded-lg border border-white/[0.07] bg-black/15 px-2 py-1 text-[9px] font-medium uppercase tracking-[0.08em] text-[#a5a4b0]">
                     {document.document_type ?? "unknown"}
                   </span>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-1.5">
-                  <span className={`rounded-full border px-2.5 py-1 text-[9px] font-medium ${badgeClass(document.status)}`}>
+                <div className="flex flex-wrap items-center gap-1.5 lg:min-w-0">
+                  <span className={`rounded-full border px-2 py-1 text-[9px] font-medium ${badgeClass(document.status)}`}>
                     {document.status.replaceAll("_", " ")}
                   </span>
-                  <span className={`rounded-full border px-2.5 py-1 text-[9px] font-medium ${badgeClass(document.index_status)}`}>
+                  <span className={`rounded-full border px-2 py-1 text-[9px] font-medium ${badgeClass(document.index_status)}`}>
                     {document.index_status.replaceAll("_", " ")}
                   </span>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.055] pt-3.5 text-[10px]">
-                  <div>
-                    <p className="text-[#686a76]">Pages</p>
-                    <p className="mt-1 font-medium text-[#c4c2ce]">
-                      {document.page_count ?? "—"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[#686a76]">Extraction</p>
-                    <p className="mt-1 truncate font-medium capitalize text-[#c4c2ce]">
-                      {document.extraction_method ?? "—"}
-                    </p>
-                  </div>
+                <div className="flex items-center gap-2 text-[10px] text-[#9b9ba7] lg:block">
+                  <span className="lg:hidden">Pages</span>
+                  <span className="font-medium text-[#c4c2ce]">
+                    {document.page_count ?? "—"}
+                  </span>
                 </div>
 
-                <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-4">
+                <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
                   <button
                     type="button"
                     onClick={() => void openText(document)}

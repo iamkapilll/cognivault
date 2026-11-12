@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Aperture,
+  Search,
   FileStack,
   LogOut,
   MessageSquareText,
@@ -35,6 +36,14 @@ function relativeTime(value: string): string {
   return date.toLocaleDateString();
 }
 
+function conversationGroup(value: string): "Today" | "Last 7 days" | "Earlier" {
+  const age = Date.now() - new Date(value).getTime();
+
+  if (age < 24 * 60 * 60 * 1000) return "Today";
+  if (age < 7 * 24 * 60 * 60 * 1000) return "Last 7 days";
+  return "Earlier";
+}
+
 export default function Sidebar({
   onNavigate,
   collapsed = false,
@@ -50,6 +59,34 @@ export default function Sidebar({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    function syncActiveConversation() {
+      setActiveConversationId(
+        new URLSearchParams(window.location.search).get("c"),
+      );
+    }
+
+    syncActiveConversation();
+    window.addEventListener("popstate", syncActiveConversation);
+    window.addEventListener(
+      "cognivault:conversations-updated",
+      syncActiveConversation,
+    );
+
+    return () => {
+      window.removeEventListener("popstate", syncActiveConversation);
+      window.removeEventListener(
+        "cognivault:conversations-updated",
+        syncActiveConversation,
+      );
+    };
+  }, [pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,9 +95,18 @@ export default function Sidebar({
       try {
         const items = await listConversations();
 
-        if (!cancelled) setConversations(items);
-      } catch {
-        // A failed history refresh must not break navigation.
+        if (!cancelled) {
+          setConversations(items);
+          setHistoryError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Could not load conversations.",
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -140,7 +186,10 @@ export default function Sidebar({
 
       <Link
         href="/agent"
-        onClick={onNavigate}
+        onClick={() => {
+          setActiveConversationId(null);
+          onNavigate?.();
+        }}
         aria-label="Start a new chat"
         title={collapsed ? "New chat" : undefined}
         className={`button-primary focus-ring mt-4 flex h-10 items-center rounded-xl text-[13px] font-medium ${
@@ -185,54 +234,116 @@ export default function Sidebar({
 
       {!collapsed && (
         <section className="mt-7 flex min-h-0 flex-1 flex-col" aria-label="Recent conversations">
-          <div className="flex items-center justify-between px-3 pb-2">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-[#626470]">
+          <div className="mb-2 flex items-center justify-between px-3">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-[#737480]">
               Recent chats
             </p>
-            <MessageSquareText size={13} className="text-[#555763]" />
+            <MessageSquareText size={13} className="text-[#656673]" />
           </div>
 
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
+          <label className="relative mx-1 mb-2 block">
+            <Search
+              size={13}
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#686a77]"
+            />
+            <input
+              type="search"
+              value={historyQuery}
+              onChange={(event) => setHistoryQuery(event.target.value)}
+              placeholder="Find a conversation"
+              aria-label="Search conversations"
+              className="control-input h-9 w-full rounded-lg pl-8 pr-2 text-[11px]"
+            />
+          </label>
+
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-1">
             {loading ? (
               <div className="space-y-2 px-2 pt-1">
                 {[0, 1, 2].map((item) => (
                   <div key={item} className="skeleton h-8 rounded-lg" />
                 ))}
               </div>
+            ) : historyError ? (
+              <p role="status" className="px-3 pt-1 text-[11px] leading-5 text-amber-200/80">
+                {historyError}
+              </p>
             ) : conversations.length === 0 ? (
               <p className="px-3 pt-1 text-[11px] leading-5 text-[#727480]">
                 No conversations yet. Start a new chat.
               </p>
             ) : (
-              conversations.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  className="group flex items-center gap-1 rounded-lg pr-1 transition hover:bg-white/[0.035]"
-                >
-                  <Link
-                    href={`/agent?c=${conversation.id}`}
-                    onClick={onNavigate}
-                    className="focus-ring min-w-0 flex-1 rounded-lg px-2.5 py-2 text-[12px] text-[#999ba7] transition hover:text-[#f0eff6]"
-                  >
-                    <span className="block truncate">{conversation.title}</span>
-                    <span className="mt-1 block text-[10px] text-[#656773]">
-                      {relativeTime(conversation.updated_at)}
-                    </span>
-                  </Link>
+              (["Today", "Last 7 days", "Earlier"] as const).map((group) => {
+                const items = conversations.filter(
+                  (conversation) =>
+                    conversationGroup(conversation.updated_at) === group &&
+                    conversation.title
+                      .toLocaleLowerCase()
+                      .includes(historyQuery.trim().toLocaleLowerCase()),
+                );
 
-                  <button
-                    type="button"
-                    aria-label={`Delete ${conversation.title}`}
-                    title={`Delete ${conversation.title}`}
-                    disabled={busyId === conversation.id}
-                    onClick={() => void handleDelete(conversation.id)}
-                    className="icon-button focus-ring h-7 w-7 rounded-md text-[#777985] opacity-0 transition group-hover:opacity-100 focus:opacity-100 hover:border-red-500/25 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-30"
-                  >
-                    <Trash2 size={13} strokeWidth={1.8} />
-                  </button>
-                </div>
-              ))
+                if (items.length === 0) return null;
+
+                return (
+                  <div key={group}>
+                    <p className="mb-1 px-3 text-[9px] font-medium uppercase tracking-[0.12em] text-[#555763]">
+                      {group}
+                    </p>
+                    <div className="space-y-0.5">
+                      {items.map((conversation) => (
+                        <div
+                          key={conversation.id}
+                          className="group flex items-center gap-1 rounded-lg pr-1 transition hover:bg-white/[0.035]"
+                        >
+                          <Link
+                            href={`/agent?c=${conversation.id}`}
+                            onClick={() => {
+                              setActiveConversationId(String(conversation.id));
+                              onNavigate?.();
+                            }}
+                            aria-current={
+                              pathname === "/agent" &&
+                              activeConversationId === String(conversation.id)
+                                ? "page"
+                                : undefined
+                            }
+                            className="focus-ring min-w-0 flex-1 rounded-lg px-2.5 py-2 text-[12px] text-[#999ba7] transition hover:text-[#f0eff6] aria-[current=page]:bg-white/[0.04] aria-[current=page]:text-[#efedfa]"
+                          >
+                            <span className="block truncate">{conversation.title}</span>
+                            <span className="mt-1 block text-[10px] text-[#656773]">
+                              {relativeTime(conversation.updated_at)}
+                            </span>
+                          </Link>
+
+                          <button
+                            type="button"
+                            aria-label={`Delete ${conversation.title}`}
+                            title={`Delete ${conversation.title}`}
+                            disabled={busyId === conversation.id}
+                            onClick={() => void handleDelete(conversation.id)}
+                            className="icon-button focus-ring h-7 w-7 rounded-md text-[#777985] opacity-0 transition group-hover:opacity-100 focus:opacity-100 hover:border-red-500/25 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-30"
+                          >
+                            <Trash2 size={13} strokeWidth={1.8} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
             )}
+            {!loading &&
+              !historyError &&
+              conversations.length > 0 &&
+              !conversations.some((conversation) =>
+                conversation.title
+                  .toLocaleLowerCase()
+                  .includes(historyQuery.trim().toLocaleLowerCase()),
+              ) && (
+                <p className="px-3 pt-1 text-[11px] leading-5 text-[#727480]">
+                  No conversations match that search.
+                </p>
+              )}
           </div>
         </section>
       )}
@@ -243,19 +354,24 @@ export default function Sidebar({
           onClick={onNavigate}
           aria-label="Account settings"
           title={collapsed ? user?.email ?? "Account settings" : undefined}
-          className={`focus-ring mb-1 flex min-h-10 items-center rounded-lg text-[12px] text-[#a5a6b1] transition hover:bg-white/[0.04] hover:text-white ${
+          className={`focus-ring mb-2 flex min-h-12 items-center rounded-xl border border-white/[0.06] bg-white/[0.02] text-[12px] text-[#a5a6b1] transition hover:border-white/[0.11] hover:bg-white/[0.04] hover:text-white ${
             collapsed ? "justify-center px-0" : "gap-2.5 px-2"
           }`}
         >
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#454052] bg-[#22212b] text-[10px] font-semibold text-[#d2c6ff]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#625995]/35 bg-[#272437] text-[10px] font-semibold text-[#d2c6ff]">
             {user?.email?.[0]?.toUpperCase() ?? "?"}
           </span>
           {!collapsed && (
-            <span className="min-w-0 flex-1 truncate">
-              {user?.email ?? "Account"}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[11px] font-medium text-[#d4d2dc]">
+                {user?.email ?? "Account"}
+              </span>
+              <span className="mt-0.5 block text-[9px] text-[#777985]">
+                Account settings
+              </span>
             </span>
           )}
-          {!collapsed && <Settings2 size={15} className="text-[#737581]" />}
+          {!collapsed && <Settings2 size={14} className="text-[#737581]" />}
         </Link>
 
         <button
