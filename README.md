@@ -4,6 +4,8 @@
 
 ### Intelligent Document Analysis & Agentic AI Workspace
 
+<img src="frontend/public/Images/cognivault_image.png" alt="Cognivault AI cover: document intelligence and agentic AI platform" width="100%">
+
 **Turn private files into searchable knowledge, grounded answers, and reviewable research workflows.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.4.5-000000?logo=next.js)](https://nextjs.org/)
