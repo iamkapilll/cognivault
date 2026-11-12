@@ -276,7 +276,8 @@ body {
   .button-secondary,
   .sidebar-link,
   .icon-button,
-  .control-input {
+  .control-input,
+  .auth-submit {
     transition: none;
   }
 }
@@ -285,9 +286,39 @@ body {
 
 .auth-canvas {
   background:
-    radial-gradient(900px 520px at 12% -8%, rgba(99, 102, 241, 0.16), transparent 62%),
-    radial-gradient(760px 460px at 92% 108%, rgba(56, 189, 248, 0.08), transparent 60%),
-    #06070b;
+    radial-gradient(1100px 720px at 7% 4%, rgb(103 88 218 / 15%), transparent 62%),
+    radial-gradient(760px 560px at 94% 95%, rgb(101 86 191 / 10%), transparent 58%),
+    linear-gradient(140deg, #0a0b11 0%, #090a0e 52%, #0b0b12 100%);
+}
+
+.auth-brand-panel {
+  background:
+    radial-gradient(ellipse 78% 62% at 8% 12%, rgb(106 91 218 / 9%), transparent 74%),
+    linear-gradient(145deg, rgb(17 17 25 / 88%), rgb(12 13 19 / 64%));
+}
+
+.auth-form-card {
+  border: 1px solid rgb(255 255 255 / 8%);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgb(113 99 203 / 7%), transparent 72%),
+    linear-gradient(155deg, rgb(20 21 30 / 96%), rgb(13 14 20 / 98%));
+  backdrop-filter: blur(22px);
+}
+
+.auth-submit {
+  border: 1px solid rgb(196 183 255 / 28%);
+  background: linear-gradient(120deg, #8373ff 0%, #6d5de8 52%, #5d50cf 100%);
+  box-shadow:
+    0 12px 32px -14px rgb(105 88 221 / 75%),
+    inset 0 1px 0 rgb(255 255 255 / 18%);
+  transition: filter 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.auth-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+  box-shadow:
+    0 16px 38px -14px rgb(115 98 234 / 82%),
+    inset 0 1px 0 rgb(255 255 255 / 22%);
 }
 
 .auth-grid {
@@ -354,7 +385,7 @@ body {
 
 .auth-orbit {
   animation: auth-orbit 46s linear infinite;
-  transform-origin: 230px 110px;
+  transform-origin: 300px 112px;
 }
 
 .auth-float {
