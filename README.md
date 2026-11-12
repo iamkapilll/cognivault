@@ -1,12 +1,10 @@
-<div align="center">
+# Cognivault
 
-# Cognivault AI
+*Full-Stack Agentic AI Platform*
 
-### Intelligent Document Analysis & Agentic AI Workspace
+![Cognivault Cover](frontend/public/images/cognivault.png)
 
-<img src="frontend/public/Images/cognivault_image.png" alt="Cognivault AI cover: document intelligence and agentic AI platform" width="100%">
-
-**Turn private files into searchable knowledge, grounded answers, and reviewable research workflows.**
+An intelligent document analysis and agentic research workspace powered by RAG, OCR, and LangGraph.
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.4.5-000000?logo=next.js)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.3-149ECA?logo=react)](https://react.dev/)
@@ -17,15 +15,15 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-agent_workflows-1C3C3C)](https://www.langchain.com/langgraph)
 
-[Overview](#overview) · [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [API](#api-overview) · [Testing](#testing-and-verification) · [Roadmap](#roadmap)
+[Overview](#overview) · [Features](#features) · [Architecture](#architecture) · [Technology stack](#technology-stack) · [Getting started](#getting-started)
 
-</div>
+[Environment variables](#environment-variables) · [API overview](#api-overview) · [Testing](#testing-and-verification) · [Security](#security) · [Project structure](#project-structure) · [Roadmap](#roadmap)
 
 > **Project status:** The core application is implemented and its local automated checks pass. It has not been deployed publicly; Docker images and a hosted CI run have not been verified. This is a learning project as well as a full-stack AI engineering portfolio project. See [security and operational limitations](#security-and-operational-limitations).
 
 ## Overview
 
-Cognivault AI is a private document intelligence and research workspace. Users can upload PDFs or images, extract text with native PDF parsing or OCR, search their own indexed content, and ask an AI assistant to answer with evidence from their documents. A LangGraph agent can combine document tools with public web search and pause before destructive actions until a person approves.
+Cognivault is a private document intelligence and research workspace. Users can upload PDFs or images, extract text with native PDF parsing or OCR, search their own indexed content, and ask an AI assistant to answer with evidence from their documents. A LangGraph agent can combine document tools with public web search and pause before destructive actions until a person approves.
 
 The project brings together three related capabilities:
 
@@ -55,7 +53,7 @@ This design is useful for researching reports, locating facts across a collectio
 
 ### Screenshots
 
-There are **no project screenshots currently committed**. No mockups or generated images are presented as product captures. Add real, sanitized captures under `docs/screenshots/` when they are available.
+There are **no application screenshots currently committed**. The cover image above is promotional artwork, not a capture of the running product. Add real, sanitized application captures under `docs/screenshots/` when they are available.
 
 | Screen | Capture status |
 | --- | --- |
