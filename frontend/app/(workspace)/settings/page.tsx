@@ -46,7 +46,7 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-5 py-8 md:px-8 md:py-10">
       <header className="mb-8">
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-indigo-400">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-strong">
           Account
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">
@@ -55,23 +55,23 @@ export default function SettingsPage() {
       </header>
 
       <div className="grid gap-5 md:grid-cols-2">
-        <section className="rounded-2xl border border-[#1e2433] bg-[#0b0e17] p-5">
+        <section className="surface-card rounded-2xl p-5">
           <h2 className="text-sm font-medium">Profile</h2>
           <dl className="mt-4 space-y-3 text-sm">
             <div>
-              <dt className="text-[11px] uppercase tracking-wider text-[#6f7890]">
+              <dt className="text-[11px] uppercase tracking-wider text-muted">
                 Email
               </dt>
               <dd className="mt-1 break-all">{user?.email}</dd>
             </div>
             <div>
-              <dt className="text-[11px] uppercase tracking-wider text-[#6f7890]">
+              <dt className="text-[11px] uppercase tracking-wider text-muted">
                 User ID
               </dt>
               <dd className="mt-1">#{user?.id}</dd>
             </div>
             <div>
-              <dt className="text-[11px] uppercase tracking-wider text-[#6f7890]">
+              <dt className="text-[11px] uppercase tracking-wider text-muted">
                 Member since
               </dt>
               <dd className="mt-1">
@@ -81,28 +81,28 @@ export default function SettingsPage() {
           </dl>
         </section>
 
-        <section className="rounded-2xl border border-[#1e2433] bg-[#0b0e17] p-5">
+        <section className="surface-card rounded-2xl p-5">
           <h2 className="text-sm font-medium">System</h2>
 
           <div className="mt-4 space-y-3 text-sm">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[#8b93a7]">Backend API</span>
+              <span className="text-muted-strong">Backend API</span>
               <span
                 className={`flex items-center gap-2 text-xs ${
                   health === "ok"
-                    ? "text-emerald-300"
+                    ? "text-success"
                     : health === "down"
-                      ? "text-red-300"
-                      : "text-[#8b93a7]"
+                      ? "text-error"
+                      : "text-muted-strong"
                 }`}
               >
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
                     health === "ok"
-                      ? "bg-emerald-400"
+                      ? "bg-success"
                       : health === "down"
-                        ? "bg-red-400"
-                        : "bg-[#5d6577]"
+                        ? "bg-error"
+                        : "bg-muted"
                   }`}
                 />
                 {health === "ok"
@@ -114,24 +114,24 @@ export default function SettingsPage() {
             </div>
 
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[#8b93a7]">Session storage</span>
-              <span className="text-xs text-[#c7cddd]">
+              <span className="text-muted-strong">Session storage</span>
+              <span className="text-xs text-muted-strong">
                 HttpOnly cookie
               </span>
             </div>
 
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[#8b93a7]">CSRF protection</span>
-              <span className="text-xs text-[#c7cddd]">
+              <span className="text-muted-strong">CSRF protection</span>
+              <span className="text-xs text-muted-strong">
                 Origin-checked writes
               </span>
             </div>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-[#1e2433] bg-[#0b0e17] p-5 md:col-span-2">
+        <section className="surface-card rounded-2xl p-5 md:col-span-2">
           <h2 className="text-sm font-medium">Sessions</h2>
-          <p className="mt-1 text-xs leading-6 text-[#8b93a7]">
+          <p className="mt-1 text-xs leading-6 text-muted-strong">
             Signing out revokes the current session on the server. Revoking all
             sessions invalidates every device that uses this account.
           </p>
@@ -140,7 +140,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={() => void logout()}
-              className="focus-ring rounded-lg border border-[#2a3142] px-4 py-2 text-sm text-[#c7cddd] hover:border-indigo-500/40 hover:text-white"
+              className="focus-ring rounded-lg border border-border-strong px-4 py-2 text-sm text-muted-strong hover:border-accent hover:text-white"
             >
               Sign out
             </button>
@@ -149,16 +149,16 @@ export default function SettingsPage() {
               type="button"
               disabled={busy}
               onClick={() => void revokeAll()}
-              className="focus-ring rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+              className="focus-ring rounded-lg border border-border-strong bg-surface-2 px-4 py-2 text-sm text-foreground transition hover:bg-surface-3 disabled:opacity-50"
             >
               {busy ? "Revoking…" : "Revoke all sessions"}
             </button>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-[#1e2433] bg-[#0b0e17] p-5 md:col-span-2">
+        <section className="surface-card rounded-2xl p-5 md:col-span-2">
           <h2 className="text-sm font-medium">Data & privacy</h2>
-          <ul className="mt-3 space-y-2 text-xs leading-6 text-[#8b93a7]">
+          <ul className="mt-3 space-y-2 text-xs leading-6 text-muted-strong">
             <li>
               Documents, chunks and conversations are scoped to your account;
               other users cannot read them by guessing identifiers.
