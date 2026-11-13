@@ -114,7 +114,7 @@ function renderInline(text: string): ReactNode[] {
           href={link[2]}
           target="_blank"
           rel="noreferrer"
-          className="text-[#c2b8ff] underline decoration-[#8d81dc]/50 underline-offset-4 hover:text-white"
+          className="text-foreground underline decoration-neutral-500/60 underline-offset-4 hover:text-muted-strong"
         >
           {link[1]}
         </a>
@@ -124,7 +124,7 @@ function renderInline(text: string): ReactNode[] {
       return (
         <code
           key={index}
-          className="rounded-md border border-white/[0.07] bg-black/25 px-1.5 py-0.5 font-mono text-[0.88em] text-[#ded9ff]"
+          className="rounded-md border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[0.88em] text-muted-strong"
         >
           {part.slice(1, -1)}
         </code>
@@ -135,7 +135,7 @@ function renderInline(text: string): ReactNode[] {
       (part.startsWith("__") && part.endsWith("__"))
     ) {
       return (
-        <strong key={index} className="font-semibold text-[#f4f2fb]">
+        <strong key={index} className="font-semibold text-foreground">
           {part.slice(2, -2)}
         </strong>
       );
@@ -174,22 +174,22 @@ function CopyableCode({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#090b10]">
+    <div className="overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex items-center justify-between border-b border-white/[0.06] bg-white/[0.025] px-3 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#777a89]">
+        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted">
           {language}
         </span>
         <button
           type="button"
           onClick={() => void copyCode()}
-          className="focus-ring inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[10px] text-[#9c9eac] transition hover:bg-white/[0.06] hover:text-white"
+          className="focus-ring inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[10px] text-muted-strong transition hover:bg-white/[0.06] hover:text-foreground"
           aria-label="Copy code"
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto p-4 text-[12px] leading-6 text-[#d3d5df]">
+      <pre className="overflow-x-auto p-4 text-[12px] leading-6 text-muted-strong">
         <code>{source}</code>
       </pre>
     </div>
@@ -198,7 +198,7 @@ function CopyableCode({
 
 export function MarkdownContent({ content }: { content: string }) {
   return (
-    <div className="space-y-3 break-words text-[13px] leading-7 text-[#c8cad5]">
+    <div className="space-y-3 break-words text-[13px] leading-7 text-muted-strong">
       {parseMarkdown(content).map((block, index) => {
         if (block.kind === "code") {
           return (
@@ -214,7 +214,7 @@ export function MarkdownContent({ content }: { content: string }) {
           return (
             <Heading
               key={index}
-              className="pt-1 text-[14px] font-semibold tracking-[-0.01em] text-[#f0eef8]"
+              className="pt-1 text-[14px] font-semibold tracking-[-0.01em] text-foreground"
             >
               {renderInline(block.text)}
             </Heading>
