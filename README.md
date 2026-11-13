@@ -15,7 +15,7 @@ An intelligent document analysis and agentic research workspace powered by RAG, 
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-agent_workflows-1C3C3C)](https://www.langchain.com/langgraph)
 
-[Overview](#overview) · [Features](#features) · [Architecture](#architecture) · [Technology stack](#technology-stack) · [Getting started](#getting-started)
+[Overview](#overview) · [Features](#features) · [Application Showcase](#application-showcase) · [Architecture](#architecture) · [Technology stack](#technology-stack) · [Getting started](#getting-started)
 
 [Environment variables](#environment-variables) · [API overview](#api-overview) · [Testing](#testing-and-verification) · [Security](#security) · [Project structure](#project-structure) · [Roadmap](#roadmap)
 
@@ -51,18 +51,57 @@ This design is useful for researching reports, locating facts across a collectio
 | Responsive workspace | Yes | Dark-themed authentication, dashboard, chat workspace, navigation, loading states, and mobile navigation are implemented. |
 | CI and containers | Configured | GitHub Actions workflow and Dockerfiles/Compose configuration exist. Hosted CI and a Docker image build/run have not been verified. |
 
-### Screenshots
+## Application Showcase
 
-There are **no application screenshots currently committed**. The cover image above is promotional artwork, not a capture of the running product. Add real, sanitized application captures under `docs/screenshots/` when they are available.
+These screenshots highlight implemented document, AI, and account workflows. The AI workspace capture also shows the entry point for document and web research, while the approval capture shows tool activity together with its human approval gate.
 
-| Screen | Capture status |
-| --- | --- |
-| Login and registration | Not yet available |
-| Document dashboard | Not yet available |
-| Document upload and progress | Not yet available |
-| OCR and candidate analysis | Not yet available |
-| RAG research and source passages | Not yet available |
-| Agent chat, streaming, and approval | Not yet available |
+### Document Dashboard
+
+Browse the document library, check processing and indexing status, and open extracted text or analysis.
+
+![Cognivault AI Document Dashboard](docs/screenshots/document-dashboard.png)
+
+### AI Agent Workspace and Research
+
+Start a private research session across documents and the web, or choose a suggested prompt for document-grounded work.
+
+![Cognivault AI Agent and Research Workspace](docs/screenshots/agent_workspace.png)
+
+### Document Upload
+
+Choose a PDF or image to add to the library, with quick actions for grounded questions and research across files.
+
+![Cognivault AI Document Upload](docs/screenshots/document-upload.png)
+
+### OCR and Document Analysis
+
+Review text extracted from an image document. OCR and extracted fields are candidates for review, not verified facts.
+
+![Cognivault AI OCR Extracted Text](docs/screenshots/ocr_generated_text.png)
+
+### RAG Document Q&A
+
+Ask about an attached document and inspect the answer alongside the source context used to ground it.
+
+![Cognivault AI RAG Document Q&A](docs/screenshots/rag-document-qa.png)
+
+### Agent Tool Execution and Human-in-the-Loop Approval
+
+See a document deletion tool in progress and the approval prompt that pauses the agent until a person approves or rejects the action.
+
+![Cognivault AI Agent Tool Approval](docs/screenshots/human_approval.png)
+
+### Authentication
+
+Sign in to the private workspace through the account authentication screen.
+
+![Cognivault AI Authentication](docs/screenshots/authentication.png)
+
+### Settings
+
+Review account details, session controls, backend status, and privacy information.
+
+![Cognivault AI Settings](docs/screenshots/settings.png)
 
 ## Architecture
 
@@ -381,7 +420,6 @@ cognivault/
 - Consider object storage for uploaded files and operational cleanup for retained data.
 - Build and exercise the Docker images, then document and verify a real deployment.
 - Expand database-backed integration coverage for account lifecycle, ownership isolation, OCR/RAG, chat history, streaming, and approvals.
-- Add real, privacy-safe product screenshots to `docs/screenshots/`.
 - Choose and add a project license before presenting the repository as open source.
 
 ## Author
