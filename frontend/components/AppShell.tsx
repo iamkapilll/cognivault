@@ -116,10 +116,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </button>
 
             <div className="min-w-0">
-              <p className="hidden text-[10px] font-medium uppercase tracking-[0.18em] text-[#70727f] sm:block">
-                Cognivault <span className="px-1.5 text-[#41434e]">/</span> Workspace
+              <p className="hidden text-[10px] font-medium uppercase tracking-[0.18em] text-muted sm:block">
+                Cognivault <span className="px-1.5 text-muted">/</span> Workspace
               </p>
-              <p className="truncate text-sm font-semibold tracking-[-0.01em] text-[#ecebf2]">
+              <p className="truncate text-sm font-semibold tracking-[-0.01em] text-foreground">
                 {pageTitle(pathname)}
               </p>
             </div>
@@ -129,12 +129,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
             href="/settings"
             aria-label="Open account settings"
             title={user?.email ?? "Account settings"}
-            className="focus-ring group flex max-w-[220px] items-center gap-2.5 rounded-full border border-transparent py-1 pl-1 pr-2 transition hover:border-[#292a35] hover:bg-white/[0.035]"
+            className="focus-ring group flex max-w-[220px] items-center gap-2.5 rounded-full border border-transparent py-1 pl-1 pr-2 transition hover:border-border hover:bg-white/[0.035]"
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#5d54ad]/40 bg-[linear-gradient(145deg,#302b55,#1d1b2d)] text-xs font-semibold text-[#c7bcff] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-xs font-semibold text-muted-strong">
               {user?.email?.[0]?.toUpperCase() ?? "?"}
             </span>
-            <span className="hidden min-w-0 truncate text-xs text-[#aaaab5] transition group-hover:text-white sm:block">
+            <span className="hidden min-w-0 truncate text-xs text-muted-strong transition group-hover:text-foreground sm:block">
               {user?.email ?? "Account"}
             </span>
           </Link>
