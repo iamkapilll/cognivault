@@ -48,16 +48,16 @@ export default function LoginPage() {
       subheading="Sign in to your workspace and pick up where you left off."
       footer={
         <>
-          <p className="text-center text-[13px] text-[#8b93a7]">
+          <p className="text-center text-[13px] text-muted-strong">
             New to Cognivault?{" "}
             <Link
               href="/register"
-              className="focus-ring rounded font-medium text-indigo-300 underline-offset-4 transition-colors hover:text-indigo-200 hover:underline"
+              className="focus-ring rounded font-medium text-foreground underline-offset-4 transition-colors hover:text-muted-strong hover:underline"
             >
               Create an account
             </Link>
           </p>
-          <p className="mt-5 flex items-center justify-center gap-2 text-[11px] text-[#5d6577]">
+          <p className="mt-5 flex items-center justify-center gap-2 text-[11px] text-muted">
             <ShieldCheckIcon width={13} height={13} />
             Argon2 hashing · HttpOnly session cookies
           </p>
