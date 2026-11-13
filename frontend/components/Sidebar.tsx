@@ -169,15 +169,15 @@ export default function Sidebar({
         }`}
         aria-label="Cognivault AI home"
       >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#9887ff]/25 bg-[linear-gradient(145deg,#302b54,#191824)] text-[#c8bdff] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_5px_20px_rgba(48,43,84,0.25)]">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border-strong bg-surface-2 text-muted-strong">
           <Aperture size={18} strokeWidth={1.8} />
         </span>
         {!collapsed && (
           <span className="min-w-0 text-left">
-            <span className="block text-[13px] font-semibold tracking-[-0.02em] text-[#f0eff6]">
-              Cognivault <span className="font-medium text-[#aaa0e9]">AI</span>
+            <span className="block text-[13px] font-semibold tracking-[-0.02em] text-foreground">
+              Cognivault <span className="font-medium text-muted-strong">AI</span>
             </span>
-            <span className="mt-0.5 block text-[10px] tracking-[0.03em] text-[#777987]">
+            <span className="mt-0.5 block text-[10px] tracking-[0.03em] text-muted">
               Document intelligence
             </span>
           </span>
@@ -202,7 +202,7 @@ export default function Sidebar({
 
       <nav aria-label="Main" className="mt-6 space-y-1">
         {!collapsed && (
-          <p className="mb-2 px-3 text-[9px] font-semibold uppercase tracking-[0.19em] text-[#626470]">
+          <p className="mb-2 px-3 text-[9px] font-semibold uppercase tracking-[0.19em] text-muted">
             Workspace
           </p>
         )}
@@ -235,17 +235,17 @@ export default function Sidebar({
       {!collapsed && (
         <section className="mt-7 flex min-h-0 flex-1 flex-col" aria-label="Recent conversations">
           <div className="mb-2 flex items-center justify-between px-3">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-[#737480]">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-muted">
               Recent chats
             </p>
-            <MessageSquareText size={13} className="text-[#656673]" />
+            <MessageSquareText size={13} className="text-muted" />
           </div>
 
           <label className="relative mx-1 mb-2 block">
             <Search
               size={13}
               aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#686a77]"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
             />
             <input
               type="search"
@@ -265,11 +265,11 @@ export default function Sidebar({
                 ))}
               </div>
             ) : historyError ? (
-              <p role="status" className="px-3 pt-1 text-[11px] leading-5 text-amber-200/80">
+              <p role="status" className="px-3 pt-1 text-[11px] leading-5 text-error">
                 {historyError}
               </p>
             ) : conversations.length === 0 ? (
-              <p className="px-3 pt-1 text-[11px] leading-5 text-[#727480]">
+              <p className="px-3 pt-1 text-[11px] leading-5 text-muted">
                 No conversations yet. Start a new chat.
               </p>
             ) : (
@@ -286,7 +286,7 @@ export default function Sidebar({
 
                 return (
                   <div key={group}>
-                    <p className="mb-1 px-3 text-[9px] font-medium uppercase tracking-[0.12em] text-[#555763]">
+                    <p className="mb-1 px-3 text-[9px] font-medium uppercase tracking-[0.12em] text-muted">
                       {group}
                     </p>
                     <div className="space-y-0.5">
@@ -307,10 +307,10 @@ export default function Sidebar({
                                 ? "page"
                                 : undefined
                             }
-                            className="focus-ring min-w-0 flex-1 rounded-lg px-2.5 py-2 text-[12px] text-[#999ba7] transition hover:text-[#f0eff6] aria-[current=page]:bg-white/[0.04] aria-[current=page]:text-[#efedfa]"
+                            className="focus-ring min-w-0 flex-1 rounded-lg px-2.5 py-2 text-[12px] text-muted transition hover:text-foreground aria-[current=page]:bg-surface-3 aria-[current=page]:text-foreground"
                           >
                             <span className="block truncate">{conversation.title}</span>
-                            <span className="mt-1 block text-[10px] text-[#656773]">
+                            <span className="mt-1 block text-[10px] text-muted">
                               {relativeTime(conversation.updated_at)}
                             </span>
                           </Link>
@@ -321,7 +321,7 @@ export default function Sidebar({
                             title={`Delete ${conversation.title}`}
                             disabled={busyId === conversation.id}
                             onClick={() => void handleDelete(conversation.id)}
-                            className="icon-button focus-ring h-7 w-7 rounded-md text-[#777985] opacity-0 transition group-hover:opacity-100 focus:opacity-100 hover:border-red-500/25 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-30"
+                            className="icon-button focus-ring h-7 w-7 rounded-md text-muted opacity-0 transition group-hover:opacity-100 focus:opacity-100 hover:border-border-strong hover:bg-surface-3 hover:text-foreground disabled:opacity-30"
                           >
                             <Trash2 size={13} strokeWidth={1.8} />
                           </button>
@@ -340,7 +340,7 @@ export default function Sidebar({
                   .toLocaleLowerCase()
                   .includes(historyQuery.trim().toLocaleLowerCase()),
               ) && (
-                <p className="px-3 pt-1 text-[11px] leading-5 text-[#727480]">
+                <p className="px-3 pt-1 text-[11px] leading-5 text-muted">
                   No conversations match that search.
                 </p>
               )}
@@ -348,30 +348,30 @@ export default function Sidebar({
         </section>
       )}
 
-      <div className="mt-auto border-t border-[#242631] pt-3">
+      <div className="mt-auto border-t border-border pt-3">
         <Link
           href="/settings"
           onClick={onNavigate}
           aria-label="Account settings"
           title={collapsed ? user?.email ?? "Account settings" : undefined}
-          className={`focus-ring mb-2 flex min-h-12 items-center rounded-xl border border-white/[0.06] bg-white/[0.02] text-[12px] text-[#a5a6b1] transition hover:border-white/[0.11] hover:bg-white/[0.04] hover:text-white ${
+          className={`focus-ring mb-2 flex min-h-12 items-center rounded-xl border border-border bg-surface text-[12px] text-muted-strong transition hover:border-border-strong hover:bg-surface-2 hover:text-foreground ${
             collapsed ? "justify-center px-0" : "gap-2.5 px-2"
           }`}
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#625995]/35 bg-[#272437] text-[10px] font-semibold text-[#d2c6ff]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-[10px] font-semibold text-muted-strong">
             {user?.email?.[0]?.toUpperCase() ?? "?"}
           </span>
           {!collapsed && (
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[11px] font-medium text-[#d4d2dc]">
+              <span className="block truncate text-[11px] font-medium text-foreground">
                 {user?.email ?? "Account"}
               </span>
-              <span className="mt-0.5 block text-[9px] text-[#777985]">
+              <span className="mt-0.5 block text-[9px] text-muted">
                 Account settings
               </span>
             </span>
           )}
-          {!collapsed && <Settings2 size={14} className="text-[#737581]" />}
+          {!collapsed && <Settings2 size={14} className="text-muted" />}
         </Link>
 
         <button
@@ -379,7 +379,7 @@ export default function Sidebar({
           onClick={() => void handleLogout()}
           aria-label="Log out"
           title={collapsed ? "Log out" : undefined}
-          className={`sidebar-link min-h-10 w-full text-[12px] hover:border-red-500/15 hover:bg-red-500/[0.07] hover:text-red-200 ${
+          className={`sidebar-link min-h-10 w-full text-[12px] ${
             collapsed ? "justify-center px-0" : "px-3"
           }`}
         >
