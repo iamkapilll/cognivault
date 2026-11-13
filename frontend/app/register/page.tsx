@@ -55,16 +55,16 @@ export default function RegisterPage() {
       subheading="Your documents and conversations stay private to your account."
       footer={
         <>
-          <p className="text-center text-[13px] text-[#8b93a7]">
+          <p className="text-center text-[13px] text-muted-strong">
             Already have an account?{" "}
             <Link
               href="/login"
-              className="focus-ring rounded font-medium text-indigo-300 underline-offset-4 transition-colors hover:text-indigo-200 hover:underline"
+              className="focus-ring rounded font-medium text-foreground underline-offset-4 transition-colors hover:text-muted-strong hover:underline"
             >
               Sign in
             </Link>
           </p>
-          <p className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] text-[#5d6577]">
+          <p className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] text-muted">
             <ShieldCheckIcon width={13} height={13} className="shrink-0" />
             Argon2 hashing · HttpOnly session cookies
           </p>

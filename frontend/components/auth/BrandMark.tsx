@@ -6,7 +6,7 @@ type BrandMarkProps = {
 export default function BrandMark({ size = 38, className = "" }: BrandMarkProps) {
   return (
     <span
-      className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[11px] border border-white/10 bg-[linear-gradient(150deg,#232840,#0b0e17)] shadow-[0_10px_30px_-14px_rgba(99,102,241,0.8)] ${className}`}
+      className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[11px] border border-border-strong bg-surface-2 ${className}`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
@@ -15,7 +15,7 @@ export default function BrandMark({ size = 38, className = "" }: BrandMarkProps)
         height={Math.round(size * 0.58)}
         viewBox="0 0 24 24"
         fill="none"
-        className="text-indigo-300"
+        className="text-muted-strong"
       >
         <path
           d="M12 2.6 20 7v10l-8 4.4L4 17V7Z"
@@ -31,13 +31,12 @@ export default function BrandMark({ size = 38, className = "" }: BrandMarkProps)
         />
         <path
           d="M12 10.2v3.6"
-          stroke="#e0e7ff"
+          stroke="currentColor"
           strokeWidth="1.2"
           strokeLinecap="round"
           opacity="0.9"
         />
       </svg>
-      <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
     </span>
   );
 }

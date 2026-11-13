@@ -95,7 +95,9 @@ describe("AgentWorkspace", () => {
   it("restores owned attachments and sends their ids after reopening a chat", async () => {
     render(<AgentWorkspace />);
 
-    expect(await screen.findByText(attachedDocument.filename)).toBeTruthy();
+    expect(
+      (await screen.findAllByText(attachedDocument.filename)).length,
+    ).toBeGreaterThan(0);
     expect(await screen.findByText("1 document in context")).toBeTruthy();
 
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
@@ -108,5 +110,26 @@ describe("AgentWorkspace", () => {
     });
 
     expect(mocks.streamAgentChat.mock.calls[0][2]).toEqual([attachedDocument.id]);
+  });
+
+  it("renders assistant Markdown and exposes code-copy controls", async () => {
+    mocks.getConversationMessages.mockResolvedValue({
+      conversation_id: conversation.id,
+      messages: [
+        {
+          role: "assistant",
+          content:
+            "## Summary\n\nA **grounded** answer.\n\n```ts\nconst answer = 42;\n```",
+        },
+      ],
+      pending_approvals: [],
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByRole("heading", { name: "Summary" })).toBeTruthy();
+    expect(screen.getByText("grounded").tagName).toBe("STRONG");
+    expect(screen.getByText("const answer = 42;")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
   });
 });

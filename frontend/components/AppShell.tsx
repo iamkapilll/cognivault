@@ -2,20 +2,35 @@
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  X,
+} from "lucide-react";
 
 import Sidebar from "@/components/Sidebar";
-import { MenuIcon, XIcon } from "@/components/icons";
+import { useAuth } from "@/components/AuthGuard";
+
+function pageTitle(pathname: string): string {
+  if (pathname.startsWith("/agent")) return "AI Workspace";
+  if (pathname.startsWith("/research")) return "AI Research";
+  if (pathname.startsWith("/settings")) return "Settings";
+  return "Documents";
+}
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { user } = useAuth();
+  const [collapsed, setCollapsed] = useState(false);
 
   // The drawer is bound to the path it was opened on, so navigation closes
   // it without an extra render pass.
   const [openForPath, setOpenForPath] = useState<string | null>(null);
   const open = openForPath === pathname;
-  const setOpen = (value: boolean) =>
-    setOpenForPath(value ? pathname : null);
+  const setOpen = (value: boolean) => setOpenForPath(value ? pathname : null);
 
   useEffect(() => {
     if (!open) return;
@@ -29,46 +44,100 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [open]);
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[272px_minmax(0,1fr)]">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[272px] border-r border-[#161b26] lg:block">
-        <Sidebar />
+    <div
+      className={`min-h-dvh lg:grid ${
+        collapsed
+          ? "lg:grid-cols-[76px_minmax(0,1fr)]"
+          : "lg:grid-cols-[260px_minmax(0,1fr)]"
+      }`}
+    >
+      <aside
+        aria-label="Workspace navigation"
+        className={`sidebar-surface fixed inset-y-0 left-0 z-30 hidden transition-[width] duration-200 ease-out lg:block ${
+          collapsed ? "w-[76px]" : "w-[260px]"
+        }`}
+      >
+        <Sidebar collapsed={collapsed} />
       </aside>
 
       {open && (
-        <div className="fixed inset-0 z-40 lg:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden">
           <button
             type="button"
             aria-label="Close navigation"
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            className="animate-fade-in absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm"
             onClick={() => setOpen(false)}
           />
-          <div className="animate-fade-up absolute inset-y-0 left-0 w-[280px] border-r border-[#161b26] shadow-2xl">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Workspace navigation"
+            className="sidebar-surface animate-fade-up absolute inset-y-0 left-0 w-[min(86vw,300px)] shadow-2xl"
+          >
             <button
               type="button"
               aria-label="Close navigation"
               onClick={() => setOpen(false)}
-              className="absolute right-3 top-5 z-10 rounded-md p-1.5 text-[#8b93a7] hover:bg-[#161b26]"
+              className="icon-button focus-ring absolute right-3 top-4 z-10 h-9 w-9 rounded-lg"
             >
-              <XIcon width={18} height={18} />
+              <X size={17} strokeWidth={1.8} />
             </button>
             <Sidebar onNavigate={() => setOpen(false)} />
-          </div>
+          </section>
         </div>
       )}
 
-      <div className="flex min-h-screen flex-col lg:col-start-2">
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[#161b26] bg-[#07080d]/80 px-4 py-3 backdrop-blur lg:hidden">
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            aria-label="Open navigation"
-            className="focus-ring rounded-lg border border-[#1e2433] p-2 text-[#c7cddd]"
-          >
-            <MenuIcon />
-          </button>
+      <div className="flex min-h-dvh min-w-0 flex-col lg:col-start-2">
+        <header className="app-topbar sticky top-0 z-20 flex h-[68px] shrink-0 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              aria-label="Open navigation"
+              aria-expanded={open}
+              className="icon-button focus-ring h-9 w-9 rounded-lg lg:hidden"
+            >
+              <Menu size={18} strokeWidth={1.8} />
+            </button>
 
-          <span className="text-sm font-semibold">Cognivault AI</span>
-          <span className="w-9" />
+            <button
+              type="button"
+              onClick={() => setCollapsed((value) => !value)}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-pressed={collapsed}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="icon-button focus-ring hidden h-9 w-9 rounded-lg lg:inline-flex"
+            >
+              {collapsed ? (
+                <PanelLeftOpen size={17} strokeWidth={1.7} />
+              ) : (
+                <PanelLeftClose size={17} strokeWidth={1.7} />
+              )}
+            </button>
+
+            <div className="min-w-0">
+              <p className="hidden text-[10px] font-medium uppercase tracking-[0.18em] text-muted sm:block">
+                Cognivault <span className="px-1.5 text-muted">/</span> Workspace
+              </p>
+              <p className="truncate text-sm font-semibold tracking-[-0.01em] text-foreground">
+                {pageTitle(pathname)}
+              </p>
+            </div>
+          </div>
+
+          <Link
+            href="/settings"
+            aria-label="Open account settings"
+            title={user?.email ?? "Account settings"}
+            className="focus-ring group flex max-w-[220px] items-center gap-2.5 rounded-full border border-transparent py-1 pl-1 pr-2 transition hover:border-border hover:bg-white/[0.035]"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-xs font-semibold text-muted-strong">
+              {user?.email?.[0]?.toUpperCase() ?? "?"}
+            </span>
+            <span className="hidden min-w-0 truncate text-xs text-muted-strong transition group-hover:text-foreground sm:block">
+              {user?.email ?? "Account"}
+            </span>
+          </Link>
         </header>
 
         <main className="min-w-0 flex-1">{children}</main>

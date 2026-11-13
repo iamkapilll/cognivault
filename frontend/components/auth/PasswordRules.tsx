@@ -21,14 +21,14 @@ export default function PasswordRules({ id, password }: PasswordRulesProps) {
           <li
             key={rule.label}
             className={`flex items-center gap-2 text-[11.5px] transition-colors duration-200 ${
-              passed ? "text-emerald-300/90" : "text-[#667088]"
+              passed ? "text-success" : "text-muted"
             }`}
           >
             <span
               aria-hidden="true"
               className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${
                 passed
-                  ? "border-emerald-400/40 bg-emerald-400/10"
+                  ? "border-success/40 bg-success/10"
                   : "border-white/10 bg-white/[0.03]"
               }`}
             >
