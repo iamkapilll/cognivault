@@ -77,25 +77,25 @@ export default function ResearchPage() {
     <div className="mx-auto w-full max-w-[1440px] px-4 pb-12 pt-6 sm:px-6 lg:px-9 lg:pt-8">
       <header className="mb-7 flex flex-col justify-between gap-5 border-b border-white/[0.065] pb-6 sm:flex-row sm:items-end">
         <div>
-          <div className="mb-3 flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[#898b98]">
+          <div className="mb-3 flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.16em] text-muted">
             <span>Knowledge base</span>
-            <span className="text-[#555763]">/</span>
-            <span className="text-[#b8adff]">Grounded research</span>
+            <span className="text-muted">/</span>
+            <span className="text-muted-strong">Grounded research</span>
           </div>
-          <h1 className="flex items-center gap-3 text-[30px] font-semibold leading-tight tracking-[-0.04em] text-[#f0eef7] sm:text-[36px]">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#a194ff]/15 bg-[#8c7cf2]/[0.08] text-[#c0b6ff]">
+          <h1 className="flex items-center gap-3 text-[30px] font-semibold leading-tight tracking-[-0.04em] text-foreground sm:text-[36px]">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-border-strong bg-surface-2 text-muted-strong">
               <Sparkles size={19} strokeWidth={1.7} />
             </span>
             Research across your files
           </h1>
-          <p className="mt-2 max-w-2xl text-[12px] leading-6 text-[#9395a2] sm:text-[13px]">
+          <p className="mt-2 max-w-2xl text-[12px] leading-6 text-muted-strong sm:text-[13px]">
             Ask a focused question, choose which indexed files to search, then
             inspect the passages behind the answer.
           </p>
         </div>
         <div className="flex items-center gap-2 self-start rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 sm:self-auto">
-          <ShieldCheck size={15} className="text-emerald-300/80" />
-          <span className="text-[10px] text-[#a6a7b2]">
+          <ShieldCheck size={15} className="text-muted-strong" />
+          <span className="text-[10px] text-muted-strong">
             Evidence stays in view
           </span>
         </div>
@@ -106,25 +106,25 @@ export default function ResearchPage() {
           <div className="border-b border-white/[0.06] px-4 py-4 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.03] text-[#b3a9ef]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong">
                   <BookOpen size={15} />
                 </span>
                 <div>
-                  <h2 className="text-[12px] font-semibold text-[#e2e0e9]">
+                  <h2 className="text-[12px] font-semibold text-foreground">
                     Document scope
                   </h2>
-                  <p className="mt-0.5 text-[10px] text-[#777986]">
+                  <p className="mt-0.5 text-[10px] text-muted">
                     {loadingDocs
                       ? "Loading library…"
                       : `${documents.length} ${documents.length === 1 ? "file" : "files"} in your library`}
                   </p>
                 </div>
               </div>
-              <span className="rounded-md border border-white/[0.07] bg-white/[0.025] px-2 py-1 text-[9px] text-[#999ba6]">
+              <span className="rounded-md border border-border bg-surface px-2 py-1 text-[9px] text-muted-strong">
                 {selected.length ? `${selected.length} selected` : "All indexed"}
               </span>
             </div>
-            <p className="mt-3 text-[10px] leading-5 text-[#858692]">
+            <p className="mt-3 text-[10px] leading-5 text-muted-strong">
               {selected.length === 0
                 ? "No filter selected. Search across every indexed document you own."
                 : "Only the selected documents will be used for this answer."}
@@ -140,16 +140,16 @@ export default function ResearchPage() {
               </div>
             ) : documents.length === 0 ? (
               <div className="px-3 py-7 text-center">
-                <FileSearch size={20} className="mx-auto text-[#777987]" />
-                <p className="mt-3 text-[11px] font-medium text-[#d0ced8]">
+                <FileSearch size={20} className="mx-auto text-muted" />
+                <p className="mt-3 text-[11px] font-medium text-foreground">
                   No documents to search yet
                 </p>
-                <p className="mx-auto mt-1 max-w-[220px] text-[10px] leading-5 text-[#777986]">
+                <p className="mx-auto mt-1 max-w-[220px] text-[10px] leading-5 text-muted">
                   Add a file to your library and index it to make it searchable.
                 </p>
                 <Link
                   href="/"
-                  className="focus-ring mt-3 inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[10px] text-[#b7adff] hover:bg-white/[0.04] hover:text-white"
+                  className="focus-ring mt-3 inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[10px] text-foreground hover:bg-surface-2"
                 >
                   Open document library
                   <ArrowRight size={12} />
@@ -164,8 +164,8 @@ export default function ResearchPage() {
                     key={document.id}
                     className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 transition ${
                       checked
-                        ? "border-[#9e90ff]/20 bg-[#8c7cf2]/[0.06]"
-                        : "border-transparent hover:border-white/[0.06] hover:bg-white/[0.025]"
+                        ? "border-border-strong bg-surface-2"
+                        : "border-transparent hover:border-border hover:bg-surface"
                     } ${!indexed ? "cursor-not-allowed opacity-50" : ""}`}
                   >
                     <input
@@ -179,20 +179,20 @@ export default function ResearchPage() {
                       aria-hidden="true"
                       className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border ${
                         checked
-                          ? "border-[#b4a9ff]/45 bg-[#8c7cf2]/25 text-[#e0dbff]"
+                          ? "border-foreground bg-foreground text-background"
                           : "border-white/[0.14] bg-black/10 text-transparent"
                       }`}
                     >
                       {checked && <Check size={12} strokeWidth={2.2} />}
                     </span>
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#9d97c8]">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong">
                       <FileText size={15} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[11px] font-medium text-[#d7d5df]">
+                      <span className="block truncate text-[11px] font-medium text-foreground">
                         {document.filename}
                       </span>
-                      <span className="mt-1 block text-[9px] text-[#777986]">
+                      <span className="mt-1 block text-[9px] text-muted">
                         {document.page_count ?? "—"} pages
                         {document.document_type
                           ? ` · ${document.document_type}`
@@ -202,8 +202,8 @@ export default function ResearchPage() {
                     <span
                       className={`shrink-0 rounded-full border px-2 py-1 text-[8px] font-medium ${
                         indexed
-                          ? "border-emerald-400/15 bg-emerald-400/[0.05] text-emerald-200/85"
-                          : "border-white/[0.08] bg-white/[0.025] text-[#81838f]"
+                          ? "border-success/15 bg-success/[0.05] text-success"
+                          : "border-border bg-surface text-muted-strong"
                       }`}
                     >
                       {indexed ? "Indexed" : document.index_status.replaceAll("_", " ")}
@@ -215,8 +215,8 @@ export default function ResearchPage() {
           </div>
 
           <div className="border-t border-white/[0.06] px-4 py-3">
-            <p className="flex items-center gap-2 text-[9px] leading-4 text-[#777986]">
-              <Search size={12} className="shrink-0 text-[#9b91d7]" />
+            <p className="flex items-center gap-2 text-[9px] leading-4 text-muted">
+              <Search size={12} className="shrink-0 text-muted" />
               Only indexed documents can be selected.
             </p>
           </div>
@@ -225,27 +225,27 @@ export default function ResearchPage() {
         <section className="min-w-0">
           <form
             onSubmit={onSubmit}
-            className="overflow-hidden rounded-[22px] border border-white/[0.085] bg-[linear-gradient(145deg,#151720,#101218)] shadow-[0_22px_60px_-48px_rgba(0,0,0,0.95)]"
+            className="surface-card overflow-hidden rounded-[22px]"
           >
             <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-4 py-3.5 sm:px-5">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#9f93ff]/15 bg-[#8c7cf2]/[0.08] text-[#bdb2ff]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong">
                   <FileSearch size={15} />
                 </span>
                 <div>
                   <label
                     htmlFor="research-question"
-                    className="block text-[12px] font-semibold text-[#e5e3ec]"
+                    className="block text-[12px] font-semibold text-foreground"
                   >
                     Ask your documents
                   </label>
-                  <p className="mt-0.5 text-[9px] text-[#7b7d89]">
+                  <p className="mt-0.5 text-[9px] text-muted">
                     Retrieval-augmented answer with source passages
                   </p>
                 </div>
               </div>
-              <span className="hidden items-center gap-1.5 rounded-full border border-white/[0.06] px-2.5 py-1.5 text-[9px] text-[#82848f] sm:inline-flex">
-                <ShieldCheck size={11} className="text-emerald-300/75" />
+              <span className="hidden items-center gap-1.5 rounded-full border border-border px-2.5 py-1.5 text-[9px] text-muted-strong sm:inline-flex">
+                <ShieldCheck size={11} className="text-muted-strong" />
                 Private to your account
               </span>
             </div>
@@ -258,11 +258,11 @@ export default function ResearchPage() {
                 rows={4}
                 maxLength={1000}
                 placeholder="What are the payment terms and deadlines in these documents?"
-                className="focus-ring min-h-[130px] w-full resize-y rounded-xl border border-white/[0.07] bg-[#0b0d12] p-4 text-[13px] leading-6 text-[#e5e3eb] placeholder:text-[#666875]"
+                className="focus-ring min-h-[130px] w-full resize-y rounded-xl border border-border bg-background p-4 text-[13px] leading-6 text-foreground placeholder:text-muted"
               />
               <div className="mt-3 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                <p className="flex items-center gap-2 text-[10px] text-[#777986]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#a59aff]" />
+                <p className="flex items-center gap-2 text-[10px] text-muted">
+                  <span className="h-1.5 w-1.5 rounded-full bg-muted-strong" />
                   Evidence-first answers · inspect every source
                 </p>
                 <button
@@ -295,13 +295,13 @@ export default function ResearchPage() {
 
           {!loading && !result && (
             <div className="mt-5 flex min-h-[210px] flex-col justify-center rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.012] px-5 py-7 sm:px-7">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.025] text-[#aaa1e8]">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface-2 text-muted-strong">
                 <BookOpen size={18} />
               </span>
-              <h2 className="mt-4 text-[13px] font-semibold text-[#d9d7e1]">
+              <h2 className="mt-4 text-[13px] font-semibold text-foreground">
                 The answer should come with its evidence
               </h2>
-              <p className="mt-1.5 max-w-lg text-[11px] leading-5 text-[#82848f]">
+              <p className="mt-1.5 max-w-lg text-[11px] leading-5 text-muted-strong">
                 Submit a question to retrieve matching passages from your selected
                 documents. If no files are selected, the search uses all indexed files.
               </p>
@@ -310,12 +310,12 @@ export default function ResearchPage() {
 
           {result && !loading && (
             <div className="mt-5 space-y-5">
-              <article className="animate-fade-up rounded-2xl border border-white/[0.08] bg-[#11131a] p-4 sm:p-5">
+              <article className="surface-card animate-fade-up rounded-2xl p-4 sm:p-5">
                 <div className="mb-3 flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#9d90ff]/15 bg-[#8c7cf2]/[0.08] text-[#bcb2ff]">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong">
                     <Sparkles size={14} />
                   </span>
-                  <h2 className="text-[12px] font-semibold text-[#e5e2ed]">
+                  <h2 className="text-[12px] font-semibold text-foreground">
                     Research answer
                   </h2>
                 </div>
@@ -325,24 +325,24 @@ export default function ResearchPage() {
               <section aria-labelledby="sources-heading">
                 <div className="mb-3 flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#7b7d89]">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-muted">
                       Evidence trail
                     </p>
                     <h2
                       id="sources-heading"
-                      className="mt-1 text-[14px] font-semibold text-[#e4e2eb]"
+                      className="mt-1 text-[14px] font-semibold text-foreground"
                     >
                       Source passages
                     </h2>
                   </div>
-                  <span className="rounded-md border border-white/[0.07] bg-white/[0.025] px-2 py-1 text-[9px] text-[#9294a0]">
+                  <span className="rounded-md border border-border bg-surface px-2 py-1 text-[9px] text-muted-strong">
                     {result.sources.length}{" "}
                     {result.sources.length === 1 ? "source" : "sources"}
                   </span>
                 </div>
 
                 {result.sources.length === 0 ? (
-                  <p className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 py-5 text-[11px] leading-5 text-[#898b97]">
+                  <p className="rounded-xl border border-border bg-surface px-4 py-5 text-[11px] leading-5 text-muted-strong">
                     No source passages were returned for this question.
                   </p>
                 ) : (
@@ -350,24 +350,24 @@ export default function ResearchPage() {
                     {result.sources.map((source, index) => (
                       <article
                         key={`${source.document_id}-${source.chunk_index}`}
-                        className="rounded-2xl border border-white/[0.07] bg-[#101218] p-4 sm:p-5"
+                        className="rounded-2xl border border-border bg-surface p-4 sm:p-5"
                       >
                         <div className="mb-3 flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 rounded-md border border-[#9d90ff]/15 bg-[#8c7cf2]/[0.07] px-2 py-1 text-[9px] font-medium text-[#c1b8ff]">
-                            <span className="h-1 w-1 rounded-full bg-[#b3a8ff]" />
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[9px] font-medium text-muted-strong">
+                            <span className="h-1 w-1 rounded-full bg-muted" />
                             Source {index + 1}
                           </span>
-                          <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-[#b9bac5]">
+                          <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-muted-strong">
                             {source.filename}
                           </span>
-                          <span className="text-[9px] text-[#777985]">
+                          <span className="text-[9px] text-muted">
                             Passage {source.chunk_index}
                           </span>
-                          <span className="rounded-full border border-white/[0.07] px-2 py-1 text-[8px] text-[#858793]">
+                          <span className="rounded-full border border-border px-2 py-1 text-[8px] text-muted-strong">
                             {Math.round((1 - source.distance) * 100)}% match
                           </span>
                         </div>
-                        <p className="border-l-2 border-[#8e81e4]/35 pl-3 text-[11px] leading-6 text-[#aeb0bc] sm:text-[12px]">
+                        <p className="border-l-2 border-border-strong pl-3 text-[11px] leading-6 text-muted-strong sm:text-[12px]">
                           {source.content}
                         </p>
                       </article>
