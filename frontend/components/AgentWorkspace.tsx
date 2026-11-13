@@ -107,10 +107,10 @@ function documentStatusTone(document: ApiDocument): string {
     document.index_status.includes("fail") ||
     document.review_status.includes("needs")
   ) {
-    return "text-amber-200";
+    return "text-muted-strong";
   }
-  if (document.index_status === "indexed") return "text-emerald-200";
-  return "text-[#9295a3]";
+  if (document.index_status === "indexed") return "text-success";
+  return "text-muted-strong";
 }
 
 export default function AgentWorkspace() {
@@ -526,16 +526,16 @@ export default function AgentWorkspace() {
     : "hidden xl:flex xl:w-[318px] xl:shrink-0 xl:flex-col";
 
   return (
-    <div className="relative flex h-[calc(100dvh-68px)] min-h-[520px] flex-col overflow-hidden bg-[#0b0d12]">
+    <div className="relative flex h-[calc(100dvh-68px)] min-h-[520px] flex-col overflow-hidden bg-background">
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-[62px] shrink-0 items-center justify-between gap-3 border-b border-white/[0.065] px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="hidden h-8 w-8 items-center justify-center rounded-lg border border-[#9d8eff]/15 bg-[#8b7cf2]/[0.09] text-[#b8adff] sm:flex">
+              <span className="hidden h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong sm:flex">
                 <Sparkles size={16} strokeWidth={1.7} />
               </span>
               <div className="min-w-0">
-                <p className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[#eae8f1]">
+                <p className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
                   {renaming ? (
                     <form
                       onSubmit={(event) => {
@@ -555,7 +555,7 @@ export default function AgentWorkspace() {
                       <button
                         type="submit"
                         aria-label="Save title"
-                        className="focus-ring rounded-md p-1.5 text-emerald-300 hover:bg-emerald-500/10"
+                        className="focus-ring rounded-md p-1.5 text-muted-strong hover:bg-surface-2 hover:text-foreground"
                       >
                         <Check size={15} />
                       </button>
@@ -563,7 +563,7 @@ export default function AgentWorkspace() {
                         type="button"
                         aria-label="Cancel rename"
                         onClick={() => setRenaming(false)}
-                        className="focus-ring rounded-md p-1.5 text-[#8b8d9a] hover:bg-white/[0.05]"
+                        className="focus-ring rounded-md p-1.5 text-muted hover:bg-surface-2 hover:text-foreground"
                       >
                         <X size={15} />
                       </button>
@@ -577,13 +577,13 @@ export default function AgentWorkspace() {
                         setRenaming(true);
                       }}
                       title={conversation ? "Rename conversation" : undefined}
-                      className="focus-ring max-w-full truncate rounded text-left hover:text-white"
+                      className="focus-ring max-w-full truncate rounded text-left hover:text-foreground"
                     >
                       {conversation?.title ?? "New research session"}
                     </button>
                   )}
                 </p>
-                <p className="mt-0.5 truncate text-[10px] text-[#737581]">
+                <p className="mt-0.5 truncate text-[10px] text-muted">
                   {attachments.length
                     ? `${attachments.length} document${attachments.length === 1 ? "" : "s"} in context`
                     : "Private research across your documents and the web"}
@@ -592,15 +592,15 @@ export default function AgentWorkspace() {
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <span className="hidden items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-2.5 py-1.5 text-[10px] text-[#999ba7] sm:inline-flex">
-                <ShieldCheck size={12} className="text-emerald-300/80" />
+              <span className="hidden items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1.5 text-[10px] text-muted-strong sm:inline-flex">
+                <ShieldCheck size={12} className="text-muted-strong" />
                 Private workspace
               </span>
               <button
                 type="button"
                 onClick={() => setContextOpen(true)}
                 aria-label="Open document context"
-                className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-2.5 text-[11px] text-[#b8b8c5] transition hover:border-white/[0.15] hover:text-white xl:hidden"
+                className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-2.5 text-[11px] text-muted-strong transition hover:border-border-strong hover:text-foreground xl:hidden"
               >
                 <BookOpen size={14} />
                 Sources
@@ -609,9 +609,9 @@ export default function AgentWorkspace() {
                 <button
                   type="button"
                   onClick={stop}
-                  className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] px-2.5 text-[11px] text-[#c4c2cd] hover:border-red-400/30 hover:text-red-200"
+                  className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] text-muted-strong hover:border-border-strong hover:bg-surface-2 hover:text-foreground"
                 >
-                  <span className="h-1.5 w-1.5 rounded-sm bg-red-300" />
+                  <span className="h-1.5 w-1.5 rounded-sm bg-muted-strong" />
                   Stop
                 </button>
               )}
@@ -628,52 +628,44 @@ export default function AgentWorkspace() {
             ) : messages.length === 0 ? (
               <div className="mx-auto w-full max-w-[860px] pb-6 pt-5 sm:pt-8">
                 <div className="mb-7 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-[#a194ff]/15 bg-[#8c7cf2]/[0.075] px-3 py-1.5 text-[10px] font-medium tracking-[0.03em] text-[#c0b6ff]">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#a89aff]" />
+                  <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-[10px] font-medium tracking-[0.03em] text-muted-strong">
+                    <span className="h-1.5 w-1.5 rounded-full bg-muted-strong" />
                     Cognivault research workspace
                   </span>
-                  <span className="text-[10px] text-[#747581]">
+                  <span className="text-[10px] text-muted">
                     {libraryLoading
                       ? "Loading your library…"
                       : `${libraryDocuments.length} ${libraryDocuments.length === 1 ? "document" : "documents"} available`}
                   </span>
                 </div>
 
-                <div className="relative overflow-hidden rounded-[26px] border border-white/[0.08] bg-[linear-gradient(125deg,#151622_0%,#11131b_57%,#12111a_100%)] p-5 shadow-[0_26px_75px_-52px_rgba(0,0,0,0.95)] sm:p-8 lg:p-9">
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute -right-20 -top-32 h-[330px] w-[330px] rounded-full border border-[#a69aff]/[0.08]"
-                  />
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute -right-8 -top-20 h-[245px] w-[245px] rounded-full border border-[#a69aff]/[0.07]"
-                  />
+                <div className="surface-card relative overflow-hidden rounded-[26px] p-5 sm:p-8 lg:p-9">
                   <div className="relative max-w-[640px]">
-                    <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-[14px] border border-[#b2a7ff]/20 bg-[#8b7bf0]/[0.11] text-[#c2b8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                    <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-[14px] border border-border-strong bg-surface-2 text-muted-strong">
                       <Sparkles size={20} strokeWidth={1.6} />
                     </div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9c91df]">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-strong">
                       Your thinking partner
                     </p>
-                    <h1 className="mt-2 text-[31px] font-semibold leading-[1.08] tracking-[-0.045em] text-[#f1eff8] sm:text-[38px]">
+                    <h1 className="mt-2 text-[31px] font-semibold leading-[1.08] tracking-[-0.045em] text-foreground sm:text-[38px]">
                       Make sense of
                       <br className="hidden sm:block" /> what you know.
                     </h1>
-                    <p className="mt-3 max-w-[530px] text-[13px] leading-6 text-[#a0a1ae] sm:text-[14px]">
+                    <p className="mt-3 max-w-[530px] text-[13px] leading-6 text-muted-strong sm:text-[14px]">
                       Ask a question, connect the dots across your files, or
                       explore a topic. Your documents stay close to the answer.
                     </p>
-                    <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-[#7d7e8b]">
+                    <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-muted">
                       <span className="inline-flex items-center gap-1.5">
-                        <FileSearch size={13} className="text-[#aaa0eb]" />
+                        <FileSearch size={13} className="text-muted-strong" />
                         Document-grounded
                       </span>
                       <span className="inline-flex items-center gap-1.5">
-                        <Globe2 size={13} className="text-[#aaa0eb]" />
+                        <Globe2 size={13} className="text-muted-strong" />
                         Web research
                       </span>
                       <span className="inline-flex items-center gap-1.5">
-                        <ShieldCheck size={13} className="text-emerald-300/80" />
+                        <ShieldCheck size={13} className="text-muted-strong" />
                         Human-approved actions
                       </span>
                     </div>
@@ -682,14 +674,14 @@ export default function AgentWorkspace() {
 
                 <div className="mb-3 mt-8 flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-[#777987]">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-muted">
                       A good place to begin
                     </p>
-                    <h2 className="mt-1 text-[15px] font-semibold tracking-[-0.02em] text-[#e5e3ec]">
+                    <h2 className="mt-1 text-[15px] font-semibold tracking-[-0.02em] text-foreground">
                       Start with a question
                     </h2>
                   </div>
-                  <span className="hidden text-[10px] text-[#6f717e] sm:block">
+                  <span className="hidden text-[10px] text-muted sm:block">
                     Choose a prompt or write your own
                   </span>
                 </div>
@@ -701,22 +693,22 @@ export default function AgentWorkspace() {
                       type="button"
                       onClick={() => void send(prompt)}
                       disabled={busy}
-                      className="focus-ring group flex min-h-[82px] items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#11131a] p-3.5 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[#9e90ff]/25 hover:bg-[#171722] disabled:cursor-not-allowed disabled:opacity-55 sm:p-4"
+                      className="focus-ring group flex min-h-[82px] items-center gap-3 rounded-2xl border border-border bg-surface p-3.5 text-left transition duration-200 hover:border-border-strong hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-55 sm:p-4"
                     >
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.035] text-[#b8b0ed] transition group-hover:border-[#9c8fff]/20 group-hover:bg-[#8a7aec]/[0.1] group-hover:text-[#d4cdff]">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-surface-2 text-muted-strong transition group-hover:border-border-strong group-hover:text-foreground">
                         <Icon size={17} strokeWidth={1.7} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[12px] font-semibold text-[#e4e2eb]">
+                        <span className="block text-[12px] font-semibold text-foreground">
                           {title}
                         </span>
-                        <span className="mt-1 block text-[10px] leading-4 text-[#838590]">
+                        <span className="mt-1 block text-[10px] leading-4 text-muted-strong">
                           {detail}
                         </span>
                       </span>
                       <ArrowRight
                         size={14}
-                        className="shrink-0 text-[#636572] transition group-hover:translate-x-0.5 group-hover:text-[#b6acff]"
+                        className="shrink-0 text-muted transition group-hover:translate-x-0.5 group-hover:text-foreground"
                       />
                     </button>
                   ))}
@@ -727,7 +719,7 @@ export default function AgentWorkspace() {
                     {attachments.map((document) => (
                       <span
                         key={document.id}
-                        className="inline-flex items-center gap-2 rounded-lg border border-[#9d8eff]/15 bg-[#8c7cf2]/[0.06] px-2.5 py-1.5 text-[10px] text-[#d0caff]"
+                        className="inline-flex items-center gap-2 rounded-lg border border-border-strong bg-surface-2 px-2.5 py-1.5 text-[10px] text-muted-strong"
                       >
                         <FileText size={13} />
                         {document.filename}
@@ -744,10 +736,10 @@ export default function AgentWorkspace() {
                       key={message.id}
                       className="animate-fade-up flex flex-col items-end gap-2"
                     >
-                      <span className="px-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[#737581]">
+                      <span className="px-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
                         You
                       </span>
-                      <div className="max-w-[88%] rounded-2xl rounded-tr-md border border-[#a195ff]/15 bg-[#252333] px-4 py-3.5 text-[#efedf5] sm:max-w-[78%] sm:px-5">
+                      <div className="max-w-[88%] rounded-2xl rounded-tr-md border border-border-strong bg-surface-2 px-4 py-3.5 text-foreground sm:max-w-[78%] sm:px-5">
                         <MarkdownContent content={message.content} />
                       </div>
                     </article>
@@ -756,19 +748,19 @@ export default function AgentWorkspace() {
                       key={message.id}
                       className="animate-fade-up flex gap-3 sm:gap-4"
                     >
-                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[#a497ff]/20 bg-[#8c7cf2]/[0.1] text-[#c6bdff]">
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-muted-strong">
                         <Sparkles size={15} />
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="mb-2 flex items-center justify-between gap-3">
-                          <span className="text-[11px] font-semibold tracking-[0.01em] text-[#dfdce9]">
+                          <span className="text-[11px] font-semibold tracking-[0.01em] text-foreground">
                             Cognivault
                           </span>
                           {!message.streaming && message.content && (
                             <button
                               type="button"
                               onClick={() => void copyMessage(message.content)}
-                              className="focus-ring rounded-md px-2 py-1 text-[10px] text-[#777987] transition hover:bg-white/[0.05] hover:text-[#cfccda]"
+                              className="focus-ring rounded-md px-2 py-1 text-[10px] text-muted transition hover:bg-surface-2 hover:text-foreground"
                             >
                               Copy response
                             </button>
@@ -779,17 +771,17 @@ export default function AgentWorkspace() {
                         ) : (
                           <div
                             role="status"
-                            className="inline-flex items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 text-[11px] text-[#a0a1ae]"
+                            className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-[11px] text-muted-strong"
                           >
                             <LoaderCircle
                               size={14}
-                              className="animate-spin text-[#b0a5ff]"
+                              className="animate-spin text-accent-2"
                             />
                             Thinking through your sources…
                           </div>
                         )}
                         {message.streaming && message.content && (
-                          <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded bg-[#aa9eff] align-middle" />
+                          <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded bg-accent align-middle" />
                         )}
                       </div>
                     </article>
@@ -801,8 +793,8 @@ export default function AgentWorkspace() {
                     aria-label="Agent activity"
                     className="ml-11 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3"
                   >
-                    <p className="mb-2 flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#777987]">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#a89aff]" />
+                    <p className="mb-2 flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted">
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                       Research activity
                     </p>
                     <div className="flex flex-wrap gap-2">
@@ -811,10 +803,10 @@ export default function AgentWorkspace() {
                           key={`${tool.name}-${index}`}
                           className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] ${
                             tool.status === "running"
-                              ? "border-[#9d8eff]/20 bg-[#8c7cf2]/[0.07] text-[#c5bcff]"
+                              ? "border-border-strong bg-surface-2 text-muted-strong"
                               : tool.status === "completed"
-                                ? "border-emerald-400/15 bg-emerald-400/[0.045] text-emerald-200/85"
-                                : "border-white/[0.08] bg-white/[0.025] text-[#989aa6]"
+                                ? "border-success/15 bg-success/[0.045] text-success"
+                                : "border-border bg-surface text-muted-strong"
                           }`}
                         >
                           {tool.status === "running" ? (
@@ -841,17 +833,17 @@ export default function AgentWorkspace() {
                 {approvals.map((approval) => (
                   <section
                     key={`${approval.document_id}-${approval.action}`}
-                    className="ml-11 rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-4 sm:p-5"
+                    className="ml-11 rounded-2xl border border-border bg-surface p-4 sm:p-5"
                   >
                     <div className="flex items-start gap-3">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-300/15 bg-amber-300/[0.07] text-amber-200">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-strong bg-surface-2 text-muted-strong">
                         <CircleHelp size={16} />
                       </span>
                       <div className="min-w-0">
-                        <h2 className="text-[13px] font-semibold text-amber-100">
+                        <h2 className="text-[13px] font-semibold text-foreground">
                           Your approval is needed
                         </h2>
-                        <p className="mt-1 text-[11px] leading-5 text-amber-100/70">
+                        <p className="mt-1 text-[11px] leading-5 text-muted-strong">
                           {approval.message}
                         </p>
                       </div>
@@ -861,7 +853,7 @@ export default function AgentWorkspace() {
                         type="button"
                         disabled={busy}
                         onClick={() => void decide("approve")}
-                        className="focus-ring min-h-9 rounded-lg border border-red-300/20 bg-red-400/[0.1] px-3 text-[11px] font-medium text-red-100 transition hover:bg-red-400/[0.17] disabled:opacity-50"
+                        className="button-primary focus-ring min-h-9 rounded-lg px-3 text-[11px] font-medium disabled:opacity-50"
                       >
                         Approve deletion
                       </button>
@@ -883,14 +875,14 @@ export default function AgentWorkspace() {
             {error && (
               <div
                 role="alert"
-                className="mx-auto mt-5 flex max-w-[780px] items-start justify-between gap-3 rounded-xl border border-red-400/20 bg-red-400/[0.055] px-4 py-3 text-[11px] text-red-100"
+                className="mx-auto mt-5 flex max-w-[780px] items-start justify-between gap-3 rounded-xl border border-error/20 bg-error/[0.055] px-4 py-3 text-[11px] text-error"
               >
                 <span className="leading-5">{error}</span>
                 <button
                   type="button"
                   onClick={() => setError("")}
                   aria-label="Dismiss error"
-                  className="focus-ring rounded-md p-1 text-red-100/65 hover:bg-red-300/10 hover:text-red-50"
+                  className="focus-ring rounded-md p-1 text-error/65 hover:bg-error/10 hover:text-error"
                 >
                   <X size={14} />
                 </button>
@@ -898,16 +890,16 @@ export default function AgentWorkspace() {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-white/[0.065] bg-[#0b0d12]/95 px-3 pb-3 pt-3 backdrop-blur-xl sm:px-6 sm:pb-4">
+          <div className="shrink-0 border-t border-border bg-background px-3 pb-3 pt-3 sm:px-6 sm:pb-4">
             <form onSubmit={onSubmit} className="mx-auto max-w-[780px]">
               {attachments.length > 0 && (
                 <div className="mb-2.5 flex flex-wrap gap-2">
                   {attachments.map((document) => (
                     <span
                       key={document.id}
-                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] py-1.5 pl-2.5 pr-1.5 text-[10px] text-[#c8c6d1]"
+                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border bg-surface-2 py-1.5 pl-2.5 pr-1.5 text-[10px] text-muted-strong"
                     >
-                      <FileText size={13} className="shrink-0 text-[#aaa0e8]" />
+                      <FileText size={13} className="shrink-0 text-muted-strong" />
                       <span className="max-w-[210px] truncate">
                         {document.filename}
                       </span>
@@ -919,7 +911,7 @@ export default function AgentWorkspace() {
                             current.filter((item) => item.id !== document.id),
                           )
                         }
-                        className="focus-ring rounded p-1 text-[#777987] hover:bg-white/[0.07] hover:text-white"
+                        className="focus-ring rounded p-1 text-muted hover:bg-surface-3 hover:text-foreground"
                       >
                         <X size={12} />
                       </button>
@@ -932,11 +924,11 @@ export default function AgentWorkspace() {
                 <div className="mb-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
                   <div className="h-1 overflow-hidden rounded-full bg-white/[0.08]">
                     <div
-                      className="h-full rounded-full bg-[#a092ff] transition-all"
+                      className="h-full rounded-full bg-accent transition-all"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>
-                  <p className="mt-1.5 text-[9px] text-[#8e8f9b]">
+                  <p className="mt-1.5 text-[9px] text-muted-strong">
                     {uploadProgress < 100
                       ? `Uploading document · ${uploadProgress}%`
                       : "Extracting and indexing…"}
@@ -944,7 +936,7 @@ export default function AgentWorkspace() {
                 </div>
               )}
 
-              <div className="group rounded-[20px] border border-white/[0.1] bg-[#15171f] p-2 shadow-[0_14px_44px_-30px_rgba(0,0,0,0.95)] transition focus-within:border-[#a396ff]/35 focus-within:bg-[#171923] hover:border-white/[0.16]">
+              <div className="group rounded-[20px] border border-border bg-surface p-2 shadow-[var(--shadow-panel)] transition focus-within:border-accent/60 focus-within:bg-surface-2 hover:border-border-strong">
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -963,7 +955,7 @@ export default function AgentWorkspace() {
                       : "Ask anything about your documents or a topic…"
                   }
                   aria-label="Message"
-                  className="max-h-40 min-h-[42px] w-full resize-none bg-transparent px-3 py-2 text-[13px] leading-6 text-[#eceaf3] outline-none placeholder:text-[#777987] disabled:opacity-60"
+                  className="max-h-40 min-h-[42px] w-full resize-none bg-transparent px-3 py-2 text-[13px] leading-6 text-foreground outline-none placeholder:text-muted disabled:opacity-60"
                 />
                 <div className="flex items-center justify-between gap-2 border-t border-white/[0.055] px-1 pt-2">
                   <div className="flex items-center gap-1">
@@ -987,7 +979,7 @@ export default function AgentWorkspace() {
                       }
                       aria-label="Attach a document"
                       title="Attach a PDF or image"
-                      className="focus-ring inline-flex h-8 items-center gap-2 rounded-lg px-2 text-[10px] text-[#999ba7] transition hover:bg-white/[0.055] hover:text-[#e9e7ef] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="focus-ring inline-flex h-8 items-center gap-2 rounded-lg px-2 text-[10px] text-muted-strong transition hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Paperclip size={14} />
                       <span className="hidden sm:inline">Attach</span>
@@ -995,7 +987,7 @@ export default function AgentWorkspace() {
                     <button
                       type="button"
                       onClick={() => setContextOpen(true)}
-                      className="focus-ring hidden h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] text-[#858794] transition hover:bg-white/[0.055] hover:text-[#e9e7ef] xl:inline-flex"
+                      className="focus-ring hidden h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] text-muted transition hover:bg-surface-2 hover:text-foreground xl:inline-flex"
                     >
                       <BookOpen size={13} />
                       {attachments.length
@@ -1006,7 +998,7 @@ export default function AgentWorkspace() {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <span className="hidden text-[9px] text-[#686a77] sm:inline">
+                    <span className="hidden text-[9px] text-muted sm:inline">
                       <kbd className="rounded border border-white/[0.08] bg-white/[0.025] px-1 py-0.5 font-sans">
                         Enter
                       </kbd>{" "}
@@ -1018,7 +1010,7 @@ export default function AgentWorkspace() {
                         !input.trim() || busy || approvals.length > 0
                       }
                       aria-label="Send message"
-                      className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#c0b5ff]/15 bg-[#9687fa] text-[#171522] shadow-[0_5px_16px_-10px_rgba(164,150,255,0.8)] transition hover:bg-[#b2a7ff] disabled:cursor-not-allowed disabled:border-white/[0.05] disabled:bg-white/[0.07] disabled:text-[#626470] disabled:shadow-none"
+                      className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl border border-accent bg-accent text-background transition hover:bg-accent-strong disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-2 disabled:text-muted"
                     >
                       <ArrowUp size={16} strokeWidth={2.2} />
                     </button>
@@ -1026,7 +1018,7 @@ export default function AgentWorkspace() {
                 </div>
               </div>
 
-              <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[9px] leading-4 text-[#686a77]">
+              <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[9px] leading-4 text-muted">
                 <ShieldCheck size={11} className="shrink-0" />
                 Verify important information. Destructive actions always need your approval.
               </p>
@@ -1036,14 +1028,14 @@ export default function AgentWorkspace() {
 
         <aside
           aria-label="Document context"
-          className={`${contextClass} border-l border-white/[0.065] bg-[#0e1016]`}
+          className={`${contextClass} border-l border-border bg-surface`}
         >
           <div className="flex min-h-[62px] shrink-0 items-center justify-between border-b border-white/[0.065] px-4">
             <div>
-              <p className="text-[12px] font-semibold text-[#e4e2eb]">
+              <p className="text-[12px] font-semibold text-foreground">
                 Source context
               </p>
-              <p className="mt-0.5 text-[10px] text-[#747682]">
+              <p className="mt-0.5 text-[10px] text-muted">
                 Files the assistant can reference
               </p>
             </div>
@@ -1051,26 +1043,26 @@ export default function AgentWorkspace() {
               type="button"
               onClick={() => setContextOpen(false)}
               aria-label="Close document context"
-              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#888a97] transition hover:bg-white/[0.05] hover:text-white xl:hidden"
+              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-foreground xl:hidden"
             >
               <X size={15} />
             </button>
-            <span className="hidden h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.025] text-[#9a92d3] xl:flex">
+            <span className="hidden h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong xl:flex">
               <BookOpen size={15} />
             </span>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="rounded-xl border border-[#a296ff]/13 bg-[#8c7cf2]/[0.055] p-3.5">
+            <div className="rounded-xl border border-border bg-surface-2 p-3.5">
               <div className="flex items-start gap-2.5">
-                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#8c7cf2]/[0.11] text-[#beb4ff]">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-muted-strong">
                   <ShieldCheck size={14} />
                 </span>
                 <div>
-                  <p className="text-[11px] font-medium text-[#d9d4f1]">
+                  <p className="text-[11px] font-medium text-muted-strong">
                     Private by design
                   </p>
-                  <p className="mt-1 text-[10px] leading-4 text-[#8f8c9f]">
+                  <p className="mt-1 text-[10px] leading-4 text-muted-strong">
                     Attached files narrow document search. Without an attachment,
                     the assistant can search your indexed library.
                   </p>
@@ -1081,15 +1073,15 @@ export default function AgentWorkspace() {
             {conversation ? (
               <section className="mt-6">
                 <div className="mb-2 flex items-center justify-between">
-                  <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#858692]">
+                  <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-strong">
                     In this conversation
                   </h2>
-                  <span className="text-[10px] text-[#666875]">
+                  <span className="text-[10px] text-muted">
                     {activeAttachments.length}
                   </span>
                 </div>
                 {activeAttachments.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-white/[0.09] px-3 py-4 text-[10px] leading-5 text-[#777985]">
+                  <p className="rounded-xl border border-dashed border-border px-3 py-4 text-[10px] leading-5 text-muted">
                     No files were attached to this conversation.
                   </p>
                 ) : (
@@ -1099,11 +1091,11 @@ export default function AgentWorkspace() {
                         key={document.id}
                         className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3"
                       >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.035] text-[#b1a8ef]">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-strong">
                           <FileText size={15} />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[10px] font-medium text-[#d1cfda]">
+                          <span className="block truncate text-[10px] font-medium text-foreground">
                             {document.filename}
                           </span>
                           <span
@@ -1121,7 +1113,7 @@ export default function AgentWorkspace() {
                 )}
                 <Link
                   href="/"
-                  className="focus-ring mt-3 inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] text-[#a99fff] transition hover:bg-white/[0.04] hover:text-[#d6d0ff]"
+                  className="focus-ring mt-3 inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] text-muted-strong transition hover:bg-surface-2 hover:text-foreground"
                 >
                   Manage documents
                   <ArrowRight size={12} />
@@ -1131,14 +1123,14 @@ export default function AgentWorkspace() {
               <section className="mt-6">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
-                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#858692]">
+                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-strong">
                       Your library
                     </h2>
-                    <p className="mt-1 text-[9px] text-[#686a77]">
+                    <p className="mt-1 text-[9px] text-muted">
                       Select up to five files for this chat
                     </p>
                   </div>
-                  <span className="rounded-md border border-white/[0.07] bg-white/[0.025] px-2 py-1 text-[9px] text-[#8b8d99]">
+                  <span className="rounded-md border border-border bg-surface px-2 py-1 text-[9px] text-muted-strong">
                     {attachments.length}/5
                   </span>
                 </div>
@@ -1146,7 +1138,7 @@ export default function AgentWorkspace() {
                 <label className="relative mt-3 block">
                   <Search
                     size={13}
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#686a77]"
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
                   />
                   <input
                     type="search"
@@ -1165,8 +1157,8 @@ export default function AgentWorkspace() {
                     ))
                   ) : filteredDocuments.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-white/[0.09] px-3 py-5 text-center">
-                      <FileText size={17} className="mx-auto text-[#777987]" />
-                      <p className="mt-2 text-[10px] text-[#a5a5b0]">
+                      <FileText size={17} className="mx-auto text-muted" />
+                      <p className="mt-2 text-[10px] text-muted-strong">
                         {libraryDocuments.length
                           ? "No files match your search."
                           : "Your library is empty."}
@@ -1174,7 +1166,7 @@ export default function AgentWorkspace() {
                       {!libraryDocuments.length && (
                         <Link
                           href="/"
-                          className="focus-ring mt-2 inline-flex items-center gap-1 text-[10px] text-[#b5aaff] hover:text-white"
+                          className="focus-ring mt-2 inline-flex items-center gap-1 text-[10px] text-muted-strong hover:text-foreground"
                         >
                           Upload a document
                           <ArrowRight size={11} />
@@ -1194,21 +1186,21 @@ export default function AgentWorkspace() {
                           aria-pressed={selected}
                           className={`focus-ring flex w-full items-center gap-2.5 rounded-xl border p-2.5 text-left transition ${
                             selected
-                              ? "border-[#a295ff]/22 bg-[#8c7cf2]/[0.07]"
+                              ? "border-border-strong bg-surface-2"
                               : "border-white/[0.06] bg-white/[0.018] hover:border-white/[0.12] hover:bg-white/[0.035]"
                           }`}
                         >
                           <span
                             className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                               selected
-                                ? "bg-[#8c7cf2]/[0.13] text-[#c2b8ff]"
-                                : "bg-white/[0.035] text-[#9899a5]"
+                                ? "bg-surface-3 text-foreground"
+                                : "bg-surface-2 text-muted-strong"
                             }`}
                           >
                             <FileText size={14} />
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[10px] font-medium text-[#d2d0db]">
+                            <span className="block truncate text-[10px] font-medium text-foreground">
                               {document.filename}
                             </span>
                             <span
@@ -1220,7 +1212,7 @@ export default function AgentWorkspace() {
                           <span
                             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
                               selected
-                                ? "border-[#b3a8ff]/40 bg-[#8c7cf2]/20 text-[#d8d1ff]"
+                                ? "border-foreground bg-foreground text-background"
                                 : "border-white/[0.1] text-transparent"
                             }`}
                           >
@@ -1233,7 +1225,7 @@ export default function AgentWorkspace() {
                 </div>
 
                 {filteredDocuments.length > 8 && (
-                  <p className="mt-2 text-center text-[9px] text-[#6f717d]">
+                  <p className="mt-2 text-center text-[9px] text-muted">
                     Showing 8 of {filteredDocuments.length} files. Search to find the rest.
                   </p>
                 )}
@@ -1241,20 +1233,20 @@ export default function AgentWorkspace() {
             )}
 
             <section className="mt-7 border-t border-white/[0.06] pt-4">
-              <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#858692]">
+              <h2 className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-strong">
                 Research tools
               </h2>
               <div className="mt-2 space-y-1">
-                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-[#999ba7]">
-                  <FileSearch size={13} className="text-[#aaa0eb]" />
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-muted-strong">
+                  <FileSearch size={13} className="text-muted-strong" />
                   Search your indexed files
                 </div>
-                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-[#999ba7]">
-                  <Globe2 size={13} className="text-[#aaa0eb]" />
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-muted-strong">
+                  <Globe2 size={13} className="text-muted-strong" />
                   Explore the web
                 </div>
-                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-[#999ba7]">
-                  <ShieldCheck size={13} className="text-emerald-300/80" />
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[10px] text-muted-strong">
+                  <ShieldCheck size={13} className="text-muted-strong" />
                   Approve sensitive actions
                 </div>
               </div>
@@ -1262,7 +1254,7 @@ export default function AgentWorkspace() {
           </div>
 
           <div className="border-t border-white/[0.06] px-4 py-3">
-            <p className="text-[9px] leading-4 text-[#666875]">
+            <p className="text-[9px] leading-4 text-muted">
               Answers can be wrong. Check important claims against the source.
             </p>
           </div>
