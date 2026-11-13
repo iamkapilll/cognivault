@@ -48,13 +48,13 @@ count, or looking impressive on GitHub.
 
 | Layer | Choice | Status |
 | --- | --- | --- |
-| Frontend | Next.js (App Router), TypeScript, Tailwind CSS, shadcn/ui | planned |
-| Backend | Python, FastAPI, Pydantic | planned |
-| Database | PostgreSQL, SQLAlchemy, Alembic | planned |
-| AI orchestration | LangChain, LangGraph, LLM APIs | planned |
-| Retrieval | PostgreSQL + pgvector | planned |
-| OCR | Tesseract or EasyOCR | later |
-| Authentication | JWT | later |
+| Frontend | Next.js (App Router), TypeScript, Tailwind CSS, shadcn/ui | implemented (no shadcn/ui components added) |
+| Backend | Python, FastAPI, Pydantic | implemented |
+| Database | PostgreSQL, SQLAlchemy, Alembic | implemented |
+| AI orchestration | LangChain, LangGraph, LLM APIs | implemented (Groq provider) |
+| Retrieval | PostgreSQL + pgvector | implemented (all-MiniLM-L6-v2, 384-dim) |
+| OCR | Tesseract or EasyOCR | implemented with Tesseract |
+| Authentication | JWT | implemented (JWT in an HttpOnly cookie + revocable server-side sessions) |
 
 ### Stack rules
 
@@ -105,7 +105,7 @@ FastAPI backend
 
 ## 4. Code organization guidelines
 
-### Current repository layout (Phase 0)
+### Current repository layout
 
 ```text
 cognivault-ai/
@@ -113,39 +113,49 @@ cognivault-ai/
 ├── README.md
 ├── LEARNING.md
 ├── .gitignore
-├── frontend/        # reserved — no code yet
-└── backend/         # reserved — no code yet
+├── docker-compose.yml
+├── .github/workflows/ci.yml
+├── frontend/        # Next.js app router, components, lib, Dockerfile
+└── backend/         # FastAPI app, alembic, scripts, tests, Dockerfile
 ```
 
-### Planned backend layout (create only when that phase starts)
+The layout below is what actually exists. It differs from the original plan:
+routers live in `app/routers/`, the ORM models and Pydantic schemas are single
+modules (`models.py`, `schemas.py`), and the agent lives in `app/agents/`.
+
+### Backend layout
 
 ```text
 backend/
 ├── app/
-│   ├── main.py            # FastAPI app factory / entry point
-│   ├── api/v1/            # routers, one module per resource
-│   ├── core/              # config, settings, security helpers
-│   ├── db/                # engine, session, base metadata
-│   ├── models/            # SQLAlchemy ORM models
-│   ├── schemas/           # Pydantic request/response models
-│   └── services/          # business logic (no FastAPI imports)
+│   ├── main.py            # FastAPI app, middleware, routers
+│   ├── routers/           # auth.py, documents.py, rag.py, agent.py
+│   ├── core/              # config, security, dependencies, csrf, rate_limit, context
+│   ├── agents/            # graph.py (LangGraph), persistence.py (lifespan)
+│   ├── services/          # extraction, OCR, retrieval, tools, conversations, uploads
+│   ├── models.py          # SQLAlchemy ORM models
+│   └── schemas.py         # Pydantic request/response models
 ├── alembic/               # migrations
+├── scripts/               # operator scripts
 ├── tests/
 ├── pyproject.toml
 └── .env.example
 ```
 
-### Planned frontend layout (create only when that phase starts)
+### Frontend layout
 
 ```text
 frontend/
-├── src/
-│   ├── app/               # routes, layouts, pages
-│   ├── components/        # reusable UI; components/ui for shadcn/ui
-│   ├── lib/               # API client, utilities
-│   └── types/             # shared TypeScript types
+├── app/
+│   ├── (workspace)/       # protected route group: /, /agent, /research, /settings
+│   ├── login/, register/
+│   ├── globals.css
+│   └── layout.tsx
+├── components/            # AppShell, Sidebar, AgentWorkspace, AuthGuard, Toast, icons
+├── lib/                   # api.ts, auth-api.ts, agent-api.ts
 ├── public/
-└── ...
+├── next.config.ts         # /backend proxy, standalone output
+└── Dockerfile
 ```
 
 ### Organization rules
@@ -264,8 +274,9 @@ frontend/
   input into SQL strings.
 - Logs: no PII, tokens, or document contents by default. Log identifiers and
   request IDs instead.
-- Auth (later): short-lived JWTs, hashed passwords, tokens never logged. Token
-  storage in the browser is a decision to be made explicitly, not by habit.
+- Auth (implemented): short-lived JWTs signed with a ≥32-character secret, Argon2
+  password hashes, tokens never logged. The JWT lives in an HttpOnly cookie and is
+  backed by a revocable `auth_sessions` row; never store tokens in `localStorage`.
 - Rate-limit endpoints that cost money (LLM calls) once they exist.
 - Dependency updates are deliberate. No blind bulk upgrades.
 
@@ -291,17 +302,17 @@ frontend/
 
 | Phase | Goal | Status |
 | --- | --- | --- |
-| 0 | Repository documentation and structure | **in progress** |
-| 1 | Next.js and FastAPI communicate (health check + one fetch) | not started |
-| 2 | PostgreSQL + SQLAlchemy + Alembic integration | not started |
-| 3 | Document upload and text extraction | not started |
-| 4 | AI chat with an LLM | not started |
-| 5 | RAG-based document Q&A with pgvector | not started |
-| 6 | OCR and structured document extraction | not started |
-| 7 | LangGraph research agent | not started |
-| 8 | Chat history and user workspaces | not started |
-| 9 | JWT authentication and security hardening | not started |
-| 10 | Full test pass and deployment | not started |
+| 0 | Repository documentation and structure | done |
+| 1 | Next.js and FastAPI communicate (health check + one fetch) | done |
+| 2 | PostgreSQL + SQLAlchemy + Alembic integration | done |
+| 3 | Document upload and text extraction | done |
+| 4 | AI chat with an LLM | done |
+| 5 | RAG-based document Q&A with pgvector | done |
+| 6 | OCR and structured document extraction | done |
+| 7 | LangGraph research agent | done |
+| 8 | Chat history and user workspaces | done |
+| 9 | JWT authentication and security hardening | done |
+| 10 | Full test pass and deployment | tests, Docker and CI configuration done; deployment not performed |
 
 Rules:
 
