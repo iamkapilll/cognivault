@@ -74,8 +74,8 @@ export default function AuthGuard({ children }: { children: ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="flex items-center gap-3 text-sm text-[#8b93a7]">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500/30 border-t-indigo-400" />
+        <div className="flex items-center gap-3 text-sm text-muted">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-border-strong border-t-foreground" />
           Checking authentication…
         </div>
       </div>
