@@ -6,15 +6,22 @@ import math
 
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from langchain_groq import ChatGroq
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from sqlalchemy.orm import Session
 
-from app.core.agent_config import ALLOWED_AGENT_TOOLS, validate_model_configuration
+from app.core.agent_config import ALLOWED_AGENT_TOOLS
 from app.core.config import settings
 from app.core.context import get_context_document_context, get_context_user_id
+from app.core.model_registry import (
+    MissingProviderCredentialsError,
+    ModelInitializationError,
+    ModelRegistryError,
+    ProviderIntegrationUnavailableError,
+    create_chat_model,
+    validate_model_configuration,
+)
 from app.models import Agent, User
 from app.services.agent_tools import TOOLS
 from app.services.agents import get_owned_agent
@@ -60,7 +67,7 @@ class UnavailableAgentToolError(AgentFactoryError):
 
 
 class UnavailableAgentProviderError(AgentFactoryError):
-    """Raised when this server cannot initialize its configured Groq provider."""
+    """Raised when this server cannot initialize the selected provider."""
 
 
 class AgentExecutionContextError(AgentFactoryError):
@@ -107,11 +114,16 @@ def _validate_persisted_configuration(agent: Agent) -> None:
     ):
         raise InvalidAgentConfigurationError("Invalid model configuration.")
     try:
-        validate_model_configuration(agent.model_provider, agent.model_name)
-    except ValueError as exc:
-        raise InvalidAgentConfigurationError(
-            "The saved model is not enabled by this server."
-        ) from exc
+        validate_model_configuration(
+            agent.model_provider,
+            agent.model_name,
+            temperature=agent.temperature,
+            require_tool_calling=bool(agent.enabled_tools),
+        )
+    except MissingProviderCredentialsError as exc:
+        raise UnavailableAgentProviderError(str(exc)) from exc
+    except ModelRegistryError as exc:
+        raise InvalidAgentConfigurationError(str(exc)) from exc
 
 
 def _resolve_tools(enabled_tools: object) -> list[BaseTool]:
@@ -199,23 +211,27 @@ def build_agent_for_user(
     agent = get_owned_agent(db, user, agent_id)
     _validate_persisted_configuration(agent)
     resolved_tools = _resolve_tools(agent.enabled_tools)
-    groq_api_key = settings.groq_api_key.strip()
-    if not groq_api_key:
-        raise UnavailableAgentProviderError(
-            "The server's Groq provider is not configured."
-        )
 
     owner_id = agent.user_id
     system_prompt = agent.system_prompt
     enabled_tool_names = tuple(agent.enabled_tools)
 
-    model = ChatGroq(
-        api_key=groq_api_key,
-        model=agent.model_name,
-        temperature=float(agent.temperature),
-        max_tokens=1000,
-        streaming=True,
-    )
+    try:
+        model = create_chat_model(
+            agent.model_provider,
+            agent.model_name,
+            float(agent.temperature),
+            require_tool_calling=bool(resolved_tools),
+        )
+    except (
+        MissingProviderCredentialsError,
+        ModelInitializationError,
+        ProviderIntegrationUnavailableError,
+    ) as exc:
+        raise UnavailableAgentProviderError(str(exc)) from exc
+    except ModelRegistryError as exc:
+        raise InvalidAgentConfigurationError(str(exc)) from exc
+
     model_with_tools = model.bind_tools(resolved_tools) if resolved_tools else model
 
     def chatbot(state: MessagesState) -> dict[str, list[BaseMessage]]:

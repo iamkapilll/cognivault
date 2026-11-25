@@ -122,12 +122,22 @@ def fake_chat_models(
 ) -> list[FakeChatModel]:
     models: list[FakeChatModel] = []
 
-    def create_fake_model(**parameters: object) -> FakeChatModel:
-        model = FakeChatModel(**parameters)
+    def create_fake_model(
+        provider: str,
+        model_name: str,
+        temperature: float,
+        **options: object,
+    ) -> FakeChatModel:
+        model = FakeChatModel(
+            provider=provider,
+            model=model_name,
+            temperature=temperature,
+            **options,
+        )
         models.append(model)
         return model
 
-    monkeypatch.setattr(factory, "ChatGroq", create_fake_model)
+    monkeypatch.setattr(factory, "create_chat_model", create_fake_model)
     return models
 
 
@@ -191,6 +201,41 @@ def test_builds_agent_with_saved_model_temperature_and_registered_tools(
     assert result["messages"][-1].content == "Mocked response"
     # Direct registry instances retain their own ContextVar authentication guard.
     assert model.bound_tools[0].invoke({"document_id": 1}) == "Not authenticated."
+
+
+@pytest.mark.parametrize(
+    ("provider", "model_name", "key_setting"),
+    [
+        ("groq", DEFAULT_AGENT_MODEL, "groq_api_key"),
+        ("openai", "gpt-5.6-sol", "openai_api_key"),
+        ("anthropic", "claude-haiku-4-5-20251001", "anthropic_api_key"),
+        ("google", "gemini-4-hydrogen", "google_api_key"),
+    ],
+)
+def test_dynamic_factory_routes_each_provider_through_the_registry(
+    agent_factory_database: AgentFactoryDatabase,
+    fake_chat_models: list[FakeChatModel],
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    model_name: str,
+    key_setting: str,
+) -> None:
+    monkeypatch.setattr(factory.settings, key_setting, f"test-{provider}-key")
+    agent = save_agent(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        model_provider=provider,
+        model_name=model_name,
+    )
+
+    build_agent_for_user(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        agent.id,
+    )
+
+    assert fake_chat_models[0].parameters["provider"] == provider
+    assert fake_chat_models[0].parameters["model"] == model_name
 
 
 def test_each_agent_supplies_its_own_system_prompt(
@@ -377,7 +422,9 @@ def test_document_tools_enforce_owner_when_model_requests_foreign_document(
         enabled_tools=["get_document_details"],
     )
     mocked_model = FakeToolCallingChatModel(foreign_document.id)
-    monkeypatch.setattr(factory, "ChatGroq", lambda **_: mocked_model)
+    monkeypatch.setattr(
+        factory, "create_chat_model", lambda *_args, **_kwargs: mocked_model
+    )
     monkeypatch.setattr(
         agent_tools,
         "SessionLocal",

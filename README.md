@@ -43,7 +43,7 @@ This design is useful for researching reports, locating facts across a collectio
 | Text extraction and OCR | Yes | PyMuPDF extracts native PDF text; Tesseract handles images and scanned/low-text PDF pages. |
 | Classification and field extraction | Yes | Rule-based document type candidates and limited fields (email and invoice number); results are marked for review. This is not a general-purpose OCR understanding system. |
 | RAG | Yes | Text is split into chunks, embedded with `all-MiniLM-L6-v2` (384 dimensions), stored in pgvector, and searched by cosine distance. Answers include source references. |
-| Agent tools | Yes | Document search, details, summaries, comparisons, candidate fields, Tavily web search, and research reports. |
+| Agent tools | Yes | Document search, details, summaries, comparisons, candidate fields, Tavily web search, and research reports. Custom agents have a server allowlisted LangChain model registry. |
 | Multi-document research | Yes | The agent can search or compare multiple user-owned documents; RAG requests can select multiple document IDs. |
 | Chat history | Yes | Conversation metadata is in PostgreSQL; messages and graph state are persisted by the LangGraph PostgreSQL checkpointer. |
 | Streaming | Yes | Server-Sent Events stream assistant text, tool activity, approval requests, and completion/error events. |
@@ -162,7 +162,7 @@ flowchart LR
 | Frontend | Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4 |
 | Backend | Python 3.13, FastAPI, Pydantic 2, SQLAlchemy 2, Alembic |
 | Database | PostgreSQL with pgvector; compatible with Neon PostgreSQL when the `vector` extension is available |
-| AI and orchestration | LangChain, LangGraph, Groq chat model, Tavily search |
+| AI and orchestration | LangChain, LangGraph, Groq, OpenAI, Anthropic, Google Gemini chat models, Tavily search |
 | Embeddings and retrieval | Sentence Transformers `all-MiniLM-L6-v2`, 384 dimensions, pgvector cosine distance |
 | Document processing | PyMuPDF, Pillow, pytesseract, Tesseract OCR |
 | Authentication | `pwdlib` Argon2, PyJWT, HttpOnly cookie, PostgreSQL-backed revocable sessions |
@@ -179,7 +179,8 @@ Exact dependency pins are recorded in [backend/requirements.txt](./backend/requi
 - Node.js 22 and npm
 - PostgreSQL with the pgvector extension; Neon PostgreSQL is supported through its connection URL
 - Tesseract OCR installed locally for scanned PDFs and images (Docker installs Tesseract in the backend image)
-- A Groq API key for LLM chat/RAG/agent features
+- A Groq API key for the default chat/RAG/agent features
+- Optional OpenAI, Anthropic, or Google API keys to enable those providers for custom agents
 - A Tavily API key for web search and web-backed research tools
 
 The app and tests can be set up without provider keys, but requests that use the corresponding AI provider will not work until a valid key is configured.
@@ -262,8 +263,11 @@ The backend reads these settings from `backend/.env` (see the complete safe temp
 | `MAX_FILE_SIZE_MB` | No | Maximum upload size; default `10`. |
 | `MAX_PDF_PAGES` | No | Maximum PDF pages; default `20`. |
 | `RAG_MAX_DISTANCE` | No | Maximum cosine distance for retrieval; default `0.75`. |
-| `GROQ_API_KEY` | AI features | Groq credential for model requests; do not expose in frontend variables. |
+| `GROQ_API_KEY` | Default AI features | Groq credential for the existing assistant and Groq-backed model requests; do not expose in frontend variables. |
 | `GROQ_MODEL` | No | Groq model identifier; default `openai/gpt-oss-20b`. |
+| `OPENAI_API_KEY` | Optional | Enables allowlisted OpenAI models for custom agents. |
+| `ANTHROPIC_API_KEY` | Optional | Enables allowlisted Anthropic models for custom agents. |
+| `GOOGLE_API_KEY` | Optional | Enables allowlisted Gemini models for custom agents. |
 | `TAVILY_API_KEY` | Web tools | Tavily credential for public web search and research reports. |
 | `TESSERACT_CMD` | OCR on Windows | Optional full path to `tesseract.exe`; empty uses `PATH`. |
 | `LOGIN_RATE_LIMIT` | No | Login attempts allowed in the configured window; default `5`. |
@@ -271,7 +275,7 @@ The backend reads these settings from `backend/.env` (see the complete safe temp
 | `PRODUCTION` | No | Set `true` in production; requires `COOKIE_SECURE=true`. |
 | `BACKEND_INTERNAL_URL` | Docker build | Frontend build-time rewrite target; Compose sets `http://backend:8000`. |
 
-`GROQ_API_KEY` and `TAVILY_API_KEY` are intentionally absent from the browser bundle. The frontend uses a relative API base URL.
+All model-provider credentials (`GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GOOGLE_API_KEY`) and `TAVILY_API_KEY` stay on the backend and are intentionally absent from the browser bundle. Additional provider clients load only when a configured custom agent selects that provider; deployments using only Groq need no other provider keys. The model registry currently allows Groq `openai/gpt-oss-20b`, `openai/gpt-oss-120b`, `llama-3.3-70b-versatile`, and `llama-3.1-8b-instant`; OpenAI `gpt-5.6-sol`; Anthropic `claude-haiku-4-5-20251001`; and Google Gemini `gemini-4-hydrogen`. Temperature limits and tool-calling support are validated per model.
 
 ## API overview
 
@@ -335,7 +339,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-**Locally verified results:** backend tests passed (**51 passed**), Ruff lint passed, Ruff format check passed (**38 files**), frontend regression tests passed (**1 passed**), ESLint and TypeScript checks passed, and the production Next.js build completed. The frontend production dependency audit reported no vulnerabilities; the full development dependency audit reported moderate advisories in a transitive lint-tool dependency. These are local results, not a claim that the hosted GitHub Actions workflow has run.
+**Locally verified results:** backend tests passed (**124 passed**), Ruff lint passed, and Ruff format check passed (**47 files**). Frontend regression tests passed (**1 passed**), ESLint and TypeScript checks passed, and the production Next.js build completed. The frontend production dependency audit reported no vulnerabilities; the full development dependency audit reported moderate advisories in a transitive lint-tool dependency. These are local results, not a claim that the hosted GitHub Actions workflow has run.
 
 To validate the main user flows manually, start PostgreSQL and both development servers, register an account, reload to check session persistence, upload a searchable PDF and an image/scanned PDF, inspect extracted text and candidate analysis, ask a RAG question and check its sources, reopen a conversation, and request a deletion to test approve/reject behavior. A second account can be used to verify that foreign document and conversation IDs are not accessible.
 

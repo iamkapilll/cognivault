@@ -10,8 +10,29 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.agent_config import validate_model_configuration
+from app.core.model_registry import ModelRegistryError
 from app.models import Agent, User
 from app.schemas import AgentCreate, AgentUpdate
+
+
+def _validate_model_configuration(
+    provider: str,
+    model_name: str,
+    *,
+    temperature: float,
+    require_tool_calling: bool,
+) -> None:
+    """Translate sanitized registry failures into a client configuration error."""
+
+    try:
+        validate_model_configuration(
+            provider,
+            model_name,
+            temperature=temperature,
+            require_tool_calling=require_tool_calling,
+        )
+    except ModelRegistryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def list_agents(db: Session, user: User) -> list[Agent]:
@@ -43,7 +64,12 @@ def get_owned_agent(db: Session, user: User, agent_id: int) -> Agent:
 def create_agent(db: Session, user: User, data: AgentCreate) -> Agent:
     """Create an agent under the authenticated user's identity."""
 
-    validate_model_configuration(data.model_provider, data.model_name)
+    _validate_model_configuration(
+        data.model_provider,
+        data.model_name,
+        temperature=data.temperature,
+        require_tool_calling=bool(data.enabled_tools),
+    )
     agent = Agent(user_id=user.id, **data.model_dump())
     db.add(agent)
 
@@ -69,7 +95,14 @@ def update_agent(
     changes = data.model_dump(exclude_unset=True)
     provider = changes.get("model_provider", agent.model_provider)
     model_name = changes.get("model_name", agent.model_name)
-    validate_model_configuration(provider, model_name)
+    temperature = changes.get("temperature", agent.temperature)
+    enabled_tools = changes.get("enabled_tools", agent.enabled_tools)
+    _validate_model_configuration(
+        provider,
+        model_name,
+        temperature=temperature,
+        require_tool_calling=bool(enabled_tools),
+    )
 
     for field_name, value in changes.items():
         setattr(agent, field_name, value)

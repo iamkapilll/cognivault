@@ -472,3 +472,22 @@ def test_patch_rejects_invalid_configuration_without_changing_agent(
     assert response.status_code == 422
     unchanged = agent_api.client.get(f"/agents/{created['id']}").json()
     assert unchanged["enabled_tools"] == ["search_documents"]
+
+
+def test_partial_patch_rejects_a_model_provider_mismatch(
+    agent_api: AgentTestClient,
+) -> None:
+    agent_api.authenticate(agent_api.first_user_id)
+    created = create_agent(agent_api)
+
+    response = agent_api.client.patch(
+        f"/agents/{created['id']}",
+        json={"model_provider": "openai"},
+        headers=ORIGIN_HEADER,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "The selected model is not enabled."
+    unchanged = agent_api.client.get(f"/agents/{created['id']}").json()
+    assert unchanged["model_provider"] == DEFAULT_AGENT_PROVIDER
+    assert unchanged["model_name"] == DEFAULT_AGENT_MODEL

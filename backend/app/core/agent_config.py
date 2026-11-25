@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from app.core.config import settings
-
-DEFAULT_AGENT_PROVIDER = "groq"
-DEFAULT_AGENT_MODEL = settings.groq_model
-
-# Agent records cannot introduce providers or models that this deployment has
-# not configured. Execution remains separate from this persistence layer.
-SUPPORTED_AGENT_MODELS = {
-    DEFAULT_AGENT_PROVIDER: frozenset({DEFAULT_AGENT_MODEL}),
-}
+from app.core.model_registry import (
+    DEFAULT_AGENT_MODEL,
+    DEFAULT_AGENT_PROVIDER,
+    SUPPORTED_AGENT_MODELS,
+    validate_model_configuration,
+)
 
 # These names correspond to tools registered by app.services.agent_tools.TOOLS.
 # Clients can select from this fixed set but cannot submit executable code.
@@ -28,10 +24,12 @@ ALLOWED_AGENT_TOOLS = frozenset(
     }
 )
 
-
-def validate_model_configuration(provider: str, model_name: str) -> None:
-    """Reject model pairs that are not explicitly enabled by the server."""
-
-    allowed_models = SUPPORTED_AGENT_MODELS.get(provider)
-    if allowed_models is None or model_name not in allowed_models:
-        raise ValueError("Unsupported model configuration")
+# Re-export model defaults and validation alongside the agent tool allowlist so
+# existing schemas and services keep one stable configuration import path.
+__all__ = [
+    "ALLOWED_AGENT_TOOLS",
+    "DEFAULT_AGENT_MODEL",
+    "DEFAULT_AGENT_PROVIDER",
+    "SUPPORTED_AGENT_MODELS",
+    "validate_model_configuration",
+]

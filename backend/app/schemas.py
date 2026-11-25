@@ -133,7 +133,12 @@ class AgentCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_model_pair(self) -> AgentCreate:
-        validate_model_configuration(self.model_provider, self.model_name)
+        validate_model_configuration(
+            self.model_provider,
+            self.model_name,
+            temperature=self.temperature,
+            require_tool_calling=bool(self.enabled_tools),
+        )
         return self
 
 
@@ -211,6 +216,14 @@ class AgentUpdate(BaseModel):
         for field_name in non_nullable_fields & self.model_fields_set:
             if getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
+
+        if self.model_provider is not None and self.model_name is not None:
+            validate_model_configuration(
+                self.model_provider,
+                self.model_name,
+                temperature=self.temperature,
+                require_tool_calling=bool(self.enabled_tools),
+            )
         return self
 
 
