@@ -5,13 +5,24 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import jwt
-from fastapi import Cookie, Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import APIKeyCookie
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import COOKIE_NAME, decode_access_token
 from app.database import get_db
 from app.models import AuthSession, User
+
+session_cookie = APIKeyCookie(
+    name=COOKIE_NAME,
+    scheme_name="CognivaultSessionCookie",
+    description=(
+        "The HttpOnly session cookie set by /auth/login or /auth/register. "
+        "Swagger requests use the browser's cookie jar."
+    ),
+    auto_error=False,
+)
 
 
 def unauthorized(detail: str = "Not authenticated") -> HTTPException:
@@ -32,7 +43,7 @@ def get_client_ip(request: Request) -> str:
 
 
 def get_current_user(
-    token: str | None = Cookie(default=None, alias=COOKIE_NAME),
+    token: str | None = Depends(session_cookie),
     db: Session = Depends(get_db),
 ) -> User:
     if not token:

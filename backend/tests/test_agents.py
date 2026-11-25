@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
+import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -14,10 +16,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.agent_config import DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER
-from app.core.security import COOKIE_NAME, create_access_token
+from app.core.security import COOKIE_NAME, create_access_token, hash_password
 from app.database import Base, get_db
 from app.main import app
-from app.models import Agent, AuthSession, User
+from app.models import Agent, AuthSession, Document, User
+from app.routers import documents as documents_router
+from app.routers import rag as rag_router
+from app.services import uploads
 
 ORIGIN_HEADER = {"Origin": "http://localhost:3000"}
 
@@ -54,7 +59,12 @@ def agent_api() -> Iterator[AgentTestClient]:
     )
     Base.metadata.create_all(
         engine,
-        tables=[User.__table__, AuthSession.__table__, Agent.__table__],
+        tables=[
+            User.__table__,
+            AuthSession.__table__,
+            Agent.__table__,
+            Document.__table__,
+        ],
     )
     session_factory = sessionmaker(
         bind=engine,
@@ -233,6 +243,162 @@ def test_agent_endpoints_require_authentication(
     assert response.status_code == 401
 
 
+def test_invalid_cookie_does_not_authenticate_agent_routes(
+    agent_api: AgentTestClient,
+) -> None:
+    agent_api.client.cookies.set(COOKIE_NAME, "not-a-valid-session-token")
+
+    response = agent_api.client.get("/agents")
+
+    assert response.status_code == 401
+
+
+def test_login_cookie_authenticates_agent_routes(
+    agent_api: AgentTestClient,
+) -> None:
+    password = "CognivaultTestPassword2026!"
+    with agent_api.session_factory.begin() as db:
+        user = db.get(User, agent_api.first_user_id)
+        assert user is not None
+        user.password_hash = hash_password(password)
+
+    login_response = agent_api.client.post(
+        "/auth/login",
+        json={
+            "email": "first-agent-user@example.com",
+            "password": password,
+        },
+        headers=ORIGIN_HEADER,
+    )
+
+    assert login_response.status_code == 200
+    set_cookie = login_response.headers["set-cookie"]
+    assert COOKIE_NAME in set_cookie
+    assert "httponly" in set_cookie.lower()
+
+    agents_response = agent_api.client.get("/agents")
+
+    assert agents_response.status_code == 200
+    assert agents_response.json() == {"agents": [], "total": 0}
+
+
+def test_swagger_openapi_declares_session_cookie_security(
+    agent_api: AgentTestClient,
+) -> None:
+    schema = agent_api.client.get("/openapi.json").json()
+    assert agent_api.client.get("/docs").status_code == 200
+    security_schemes = schema["components"]["securitySchemes"]
+    cookie_scheme = security_schemes["CognivaultSessionCookie"]
+
+    assert cookie_scheme["type"] == "apiKey"
+    assert cookie_scheme["in"] == "cookie"
+    assert cookie_scheme["name"] == COOKIE_NAME
+
+    for method, path in (
+        ("post", "/agents"),
+        ("get", "/agents"),
+        ("get", "/agents/{agent_id}"),
+        ("patch", "/agents/{agent_id}"),
+        ("delete", "/agents/{agent_id}"),
+    ):
+        operation = schema["paths"][path][method]
+        assert {"CognivaultSessionCookie": []} in operation["security"]
+        assert not any(
+            parameter.get("in") == "cookie"
+            for parameter in operation.get("parameters", [])
+        )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/agents", valid_agent_payload()),
+        ("patch", "/agents/1", {"name": "Changed"}),
+        ("delete", "/agents/1", None),
+    ],
+)
+def test_agent_write_routes_reject_missing_and_foreign_origins(
+    agent_api: AgentTestClient,
+    method: str,
+    path: str,
+    body: dict[str, object] | None,
+) -> None:
+    request = getattr(agent_api.client, method)
+    kwargs: dict[str, object] = {}
+    if body is not None:
+        kwargs["json"] = body
+
+    missing_origin = request(path, **kwargs)
+    foreign_origin = request(
+        path,
+        headers={"Origin": "https://attacker.example"},
+        **kwargs,
+    )
+
+    assert missing_origin.status_code == 403
+    assert foreign_origin.status_code == 403
+
+
+def test_rag_no_source_response_still_works_without_calling_groq(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def empty_retrieval(**kwargs: object) -> list[dict[str, object]]:
+        observed.update(kwargs)
+        return []
+
+    monkeypatch.setattr(rag_router, "retrieve_chunks", empty_retrieval)
+    agent_api.authenticate(agent_api.first_user_id)
+
+    response = agent_api.client.post(
+        "/rag/ask",
+        json={"question": "What does my research say?"},
+        headers=ORIGIN_HEADER,
+    )
+
+    assert response.status_code == 200
+    assert "No relevant indexed passages" in response.json()["answer"]
+    assert response.json()["sources"] == []
+    assert observed["user_id"] == agent_api.first_user_id
+
+
+def test_document_upload_and_text_retrieval_still_work(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(documents_router, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(uploads, "UPLOAD_DIR", tmp_path)
+    agent_api.authenticate(agent_api.first_user_id)
+
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    expected_text = "Cognivault document processing smoke test content is searchable."
+    page.insert_text((72, 72), expected_text)
+    pdf_content = pdf.tobytes()
+    pdf.close()
+
+    upload_response = agent_api.client.post(
+        "/documents/upload?auto_index=false",
+        files={"file": ("smoke-test.pdf", pdf_content, "application/pdf")},
+        headers=ORIGIN_HEADER,
+    )
+
+    assert upload_response.status_code == 201
+    document = upload_response.json()
+    assert document["filename"] == "smoke-test.pdf"
+    assert document["status"] == "completed"
+    assert document["page_count"] == 1
+    assert document["extraction_method"] == "pymupdf"
+
+    text_response = agent_api.client.get(f"/documents/{document['id']}/text")
+
+    assert text_response.status_code == 200
+    assert text_response.json()["extracted_text"] == expected_text
+
+
 def test_foreign_user_cannot_get_patch_or_delete_agent(
     agent_api: AgentTestClient,
 ) -> None:
@@ -273,6 +439,7 @@ def test_foreign_user_cannot_get_patch_or_delete_agent(
         {"enabled_tools": ["run_python"]},
         {"enabled_tools": ["search_documents", "search_documents"]},
         {"executable_code": "import os; os.remove('/')"},
+        {"user_id": 123},
     ],
 )
 def test_create_rejects_invalid_agent_configuration(
