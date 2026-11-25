@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.csrf import csrf_origin_middleware
 from app.core.dependencies import get_current_user
 from app.routers.agent import router as agent_router
+from app.routers.agents import router as agents_router
 from app.routers.auth import router as auth_router
 from app.routers.documents import router as documents_router
 from app.routers.rag import router as rag_router
@@ -81,5 +82,9 @@ app.include_router(
 )
 app.include_router(
     agent_router,
+    dependencies=[Depends(get_current_user)],
+)
+app.include_router(
+    agents_router,
     dependencies=[Depends(get_current_user)],
 )

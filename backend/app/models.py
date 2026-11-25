@@ -7,8 +7,10 @@ from datetime import datetime
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -45,6 +47,68 @@ class User(Base):
     sessions: Mapped[list[AuthSession]] = relationship(
         "AuthSession", back_populates="user", passive_deletes=True
     )
+    agents: Mapped[list[Agent]] = relationship(
+        "Agent", back_populates="user", passive_deletes=True
+    )
+
+
+class Agent(Base):
+    """User-owned configuration for a custom AI agent."""
+
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    model_provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    temperature: Mapped[float] = mapped_column(
+        Float,
+        default=0.2,
+        server_default=sa.text("0.2"),
+        nullable=False,
+    )
+    enabled_tools: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+        server_default=sa.text("'[]'"),
+        nullable=False,
+    )
+    memory_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=sa.text("false"),
+        nullable=False,
+    )
+    human_approval_required: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=sa.text("false"),
+        nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=sa.text("true"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="agents")
 
 
 class Document(Base):
