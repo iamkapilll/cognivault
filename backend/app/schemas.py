@@ -252,8 +252,80 @@ class AgentListResponse(BaseModel):
     total: int
 
 
+class AgentConversationCreate(BaseModel):
+    """Optional metadata used to create a persistent custom-agent thread."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=120)
+    document_ids: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list,
+        max_length=settings.custom_agent_max_documents,
+    )
+
+    @field_validator("title")
+    @classmethod
+    def reject_blank_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+    @field_validator("document_ids")
+    @classmethod
+    def reject_duplicate_documents(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("document_ids must not contain duplicates")
+        return value
+
+
+class AgentConversationRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def reject_blank_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+
+class AgentConversationResponse(BaseModel):
+    id: int
+    agent_id: int
+    title: str
+    document_ids: list[int]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class AgentConversationMessagesResponse(BaseModel):
+    conversation_id: int
+    total: int
+    offset: int
+    limit: int
+    messages: list[AgentConversationMessage]
+
+
+class AgentConversationListResponse(BaseModel):
+    conversations: list[AgentConversationResponse]
+    total: int
+    offset: int
+    limit: int
+
+
 class AgentInvokeRequest(BaseModel):
-    """Untrusted user input for one stateless custom-agent run."""
+    """Untrusted user input for a stateless or memory-backed agent run."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -261,10 +333,11 @@ class AgentInvokeRequest(BaseModel):
         min_length=1,
         max_length=settings.custom_agent_max_message_length,
     )
-    document_ids: list[Annotated[int, Field(ge=1)]] = Field(
-        default_factory=list,
+    document_ids: list[Annotated[int, Field(ge=1)]] | None = Field(
+        default=None,
         max_length=settings.custom_agent_max_documents,
     )
+    conversation_id: int | None = Field(default=None, ge=1)
 
     @field_validator("message")
     @classmethod
@@ -276,8 +349,11 @@ class AgentInvokeRequest(BaseModel):
 
     @field_validator("document_ids")
     @classmethod
-    def reject_duplicate_documents(cls, value: list[int]) -> list[int]:
-        if len(value) != len(set(value)):
+    def reject_duplicate_documents(
+        cls,
+        value: list[int] | None,
+    ) -> list[int] | None:
+        if value is not None and len(value) != len(set(value)):
             raise ValueError("document_ids must not contain duplicates")
         return value
 
@@ -286,12 +362,14 @@ class AgentInvokeResponse(BaseModel):
     run_id: str
     agent_id: int
     response: str
+    conversation_id: int | None = None
 
 
 class AgentRunStartedEvent(BaseModel):
     type: Literal["run_started"] = "run_started"
     run_id: str
     agent_id: int
+    conversation_id: int | None = None
 
 
 class AgentTextDeltaEvent(BaseModel):

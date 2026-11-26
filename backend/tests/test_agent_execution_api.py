@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,7 +25,7 @@ from app.core.config import settings
 from app.core.security import COOKIE_NAME, create_access_token
 from app.database import Base, get_db
 from app.main import app
-from app.models import Agent, AuthSession, Document, User
+from app.models import Agent, AuthSession, Conversation, Document, User
 from app.services import agent_execution
 
 ORIGIN_HEADER = {"Origin": "http://localhost:3000"}
@@ -36,6 +37,7 @@ class AgentTestClient:
     session_factory: sessionmaker[Session]
     first_user_id: int
     second_user_id: int
+    checkpointer: InMemorySaver
 
     def authenticate(self, user_id: int) -> None:
         jti = uuid4().hex
@@ -63,6 +65,7 @@ def agent_api() -> Iterator[AgentTestClient]:
             User.__table__,
             AuthSession.__table__,
             Agent.__table__,
+            Conversation.__table__,
             Document.__table__,
         ],
     )
@@ -73,7 +76,13 @@ def agent_api() -> Iterator[AgentTestClient]:
             yield db
 
     previous_override = app.dependency_overrides.get(get_db)
+    had_checkpointer = hasattr(app.state, "custom_agent_checkpointer")
+    previous_checkpointer = getattr(app.state, "custom_agent_checkpointer", None)
+    previous_session_local = agent_execution.SessionLocal
+    checkpointer = InMemorySaver()
     app.dependency_overrides[get_db] = override_get_db
+    app.state.custom_agent_checkpointer = checkpointer
+    agent_execution.SessionLocal = session_factory
     try:
         with session_factory.begin() as db:
             first_user = User(
@@ -87,8 +96,13 @@ def agent_api() -> Iterator[AgentTestClient]:
             db.add_all([first_user, second_user])
             db.flush()
             ids = (first_user.id, second_user.id)
-        yield AgentTestClient(TestClient(app), session_factory, *ids)
+        yield AgentTestClient(TestClient(app), session_factory, *ids, checkpointer)
     finally:
+        agent_execution.SessionLocal = previous_session_local
+        if had_checkpointer:
+            app.state.custom_agent_checkpointer = previous_checkpointer
+        else:
+            del app.state.custom_agent_checkpointer
         if previous_override is None:
             app.dependency_overrides.pop(get_db, None)
         else:
@@ -100,12 +114,14 @@ class FakeModel:
     def __init__(self, *, answer: str = "Custom agent answer.") -> None:
         self.answer = answer
         self.bound_names: list[str] = []
+        self.invocations: list[object] = []
 
     def bind_tools(self, tools: list[Any]) -> FakeModel:
         self.bound_names = [tool.name for tool in tools]
         return self
 
-    def invoke(self, _messages: object) -> AIMessage:
+    def invoke(self, messages: object) -> AIMessage:
+        self.invocations.append(messages)
         return AIMessage(content=self.answer)
 
 
@@ -200,6 +216,255 @@ def test_invoke_binds_only_tools_saved_in_agent_configuration(
 
     assert response.status_code == 200
     assert model.bound_names == ["get_document_details"]
+
+
+def create_memory_conversation(api: AgentTestClient, agent_id: int) -> dict[str, Any]:
+    response = api.client.post(
+        f"/agents/{agent_id}/conversations",
+        json={"title": "Project notes"},
+        headers=ORIGIN_HEADER,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_memory_agent_persists_history_and_exposes_paginated_public_messages(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeModel(answer="Remembered answer.")
+    mock_factory_model(monkeypatch, model)
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    conversation = create_memory_conversation(agent_api, agent["id"])
+    assert "thread_id" not in conversation
+
+    for message in ("First question", "Follow-up question"):
+        response = agent_api.client.post(
+            f"/agents/{agent['id']}/invoke",
+            json={"message": message, "conversation_id": conversation["id"]},
+            headers=ORIGIN_HEADER,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["conversation_id"] == conversation["id"]
+        assert "thread_id" not in response.json()
+
+    second_prompt = model.invocations[1]
+    visible = [
+        (item.type, item.content) for item in second_prompt if item.type != "system"
+    ]
+    assert visible == [
+        ("human", "First question"),
+        ("ai", "Remembered answer."),
+        ("human", "Follow-up question"),
+    ]
+
+    page = agent_api.client.get(
+        f"/agents/{agent['id']}/conversations/{conversation['id']}/messages?offset=1&limit=2"
+    )
+    assert page.status_code == 200, page.text
+    assert page.json() == {
+        "conversation_id": conversation["id"],
+        "total": 4,
+        "offset": 1,
+        "limit": 2,
+        "messages": [
+            {"role": "assistant", "content": "Remembered answer."},
+            {"role": "user", "content": "Follow-up question"},
+        ],
+    }
+
+    listing = agent_api.client.get(
+        f"/agents/{agent['id']}/conversations?offset=0&limit=1"
+    )
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["conversations"][0]["id"] == conversation["id"]
+
+
+def test_memory_agent_streaming_appends_to_the_same_conversation(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeModel(answer="Streamed persistent answer.")
+    mock_factory_model(monkeypatch, model)
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    conversation = create_memory_conversation(agent_api, agent["id"])
+
+    response = agent_api.client.post(
+        f"/agents/{agent['id']}/stream",
+        json={
+            "message": "Remember this streamed turn",
+            "conversation_id": conversation["id"],
+        },
+        headers=ORIGIN_HEADER,
+    )
+    assert response.status_code == 200
+    assert '"conversation_id":' + str(conversation["id"]) in response.text
+    assert "event: run_completed" in response.text
+    assert "thread_id" not in response.text
+
+    history = agent_api.client.get(
+        f"/agents/{agent['id']}/conversations/{conversation['id']}/messages"
+    )
+    assert history.status_code == 200
+    assert history.json()["messages"] == [
+        {"role": "user", "content": "Remember this streamed turn"},
+        {"role": "assistant", "content": "Streamed persistent answer."},
+    ]
+
+
+def test_memory_conversation_crud_is_owner_scoped_and_cleans_its_checkpoint(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_factory_model(monkeypatch, FakeModel())
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    conversation = create_memory_conversation(agent_api, agent["id"])
+    invoke = agent_api.client.post(
+        f"/agents/{agent['id']}/invoke",
+        json={"message": "Save this turn", "conversation_id": conversation["id"]},
+        headers=ORIGIN_HEADER,
+    )
+    assert invoke.status_code == 200
+
+    with agent_api.session_factory() as db:
+        persisted = db.get(Conversation, conversation["id"])
+        assert persisted is not None
+        thread_id = persisted.thread_id
+    assert (
+        agent_api.checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+        is not None
+    )
+
+    agent_api.authenticate(agent_api.second_user_id)
+    foreign_path = f"/agents/{agent['id']}/conversations/{conversation['id']}"
+    assert agent_api.client.get(foreign_path).status_code == 404
+    assert (
+        agent_api.client.get(f"/agents/{agent['id']}/conversations").status_code == 404
+    )
+    assert (
+        agent_api.client.patch(
+            foreign_path, json={"title": "Taken"}, headers=ORIGIN_HEADER
+        ).status_code
+        == 404
+    )
+    assert (
+        agent_api.client.delete(foreign_path, headers=ORIGIN_HEADER).status_code == 404
+    )
+
+    agent_api.authenticate(agent_api.first_user_id)
+    renamed = agent_api.client.patch(
+        foreign_path,
+        json={"title": "Renamed project"},
+        headers=ORIGIN_HEADER,
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "Renamed project"
+    deleted = agent_api.client.delete(foreign_path, headers=ORIGIN_HEADER)
+    assert deleted.status_code == 204
+    assert (
+        agent_api.checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+        is None
+    )
+
+
+def test_agent_memory_cannot_be_disabled_with_saved_conversations(
+    agent_api: AgentTestClient,
+) -> None:
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    create_memory_conversation(agent_api, agent["id"])
+
+    response = agent_api.client.patch(
+        f"/agents/{agent['id']}",
+        json={"memory_enabled": False},
+        headers=ORIGIN_HEADER,
+    )
+    assert response.status_code == 409
+
+
+def test_deleting_memory_agent_removes_its_conversations_and_checkpoint(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_factory_model(monkeypatch, FakeModel())
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    conversation = create_memory_conversation(agent_api, agent["id"])
+    invoked = agent_api.client.post(
+        f"/agents/{agent['id']}/invoke",
+        json={"message": "Persist this", "conversation_id": conversation["id"]},
+        headers=ORIGIN_HEADER,
+    )
+    assert invoked.status_code == 200
+
+    with agent_api.session_factory() as db:
+        persisted = db.get(Conversation, conversation["id"])
+        assert persisted is not None
+        thread_id = persisted.thread_id
+    deleted = agent_api.client.delete(
+        f"/agents/{agent['id']}",
+        headers=ORIGIN_HEADER,
+    )
+    assert deleted.status_code == 204
+    with agent_api.session_factory() as db:
+        assert db.get(Conversation, conversation["id"]) is None
+    assert (
+        agent_api.checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+        is None
+    )
+
+
+def test_conversation_creation_requires_authentication_and_csrf(
+    agent_api: AgentTestClient,
+) -> None:
+    unauthenticated = agent_api.client.post(
+        "/agents/1/conversations",
+        json={},
+        headers=ORIGIN_HEADER,
+    )
+    assert unauthenticated.status_code == 401
+
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    missing_origin = agent_api.client.post(
+        f"/agents/{agent['id']}/conversations",
+        json={},
+    )
+    assert missing_origin.status_code == 403
+
+
+def test_conversation_rename_and_delete_require_csrf_origin(
+    agent_api: AgentTestClient,
+) -> None:
+    agent = create_executable_agent(agent_api, memory_enabled=True)
+    conversation = create_memory_conversation(agent_api, agent["id"])
+    path = f"/agents/{agent['id']}/conversations/{conversation['id']}"
+
+    renamed = agent_api.client.patch(path, json={"title": "Missing origin"})
+    deleted = agent_api.client.delete(path)
+    assert renamed.status_code == 403
+    assert deleted.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("memory_enabled", "payload", "expected_status"),
+    [
+        (True, {"message": "hello"}, 422),
+        (False, {"message": "hello", "conversation_id": 1}, 422),
+        (True, {"message": "hello", "conversation_id": 1, "thread_id": "raw"}, 422),
+    ],
+)
+def test_memory_mode_requires_server_owned_conversation_reference(
+    agent_api: AgentTestClient,
+    memory_enabled: bool,
+    payload: dict[str, object],
+    expected_status: int,
+) -> None:
+    agent = create_executable_agent(agent_api, memory_enabled=memory_enabled)
+    response = agent_api.client.post(
+        f"/agents/{agent['id']}/invoke",
+        json=payload,
+        headers=ORIGIN_HEADER,
+    )
+    assert response.status_code == expected_status
 
 
 def test_stream_endpoint_emits_named_incremental_sse_events(

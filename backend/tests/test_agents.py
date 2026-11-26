@@ -19,7 +19,7 @@ from app.core.agent_config import DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER
 from app.core.security import COOKIE_NAME, create_access_token, hash_password
 from app.database import Base, get_db
 from app.main import app
-from app.models import Agent, AuthSession, Document, User
+from app.models import Agent, AuthSession, Conversation, Document, User
 from app.routers import documents as documents_router
 from app.routers import rag as rag_router
 from app.services import uploads
@@ -63,6 +63,7 @@ def agent_api() -> Iterator[AgentTestClient]:
             User.__table__,
             AuthSession.__table__,
             Agent.__table__,
+            Conversation.__table__,
             Document.__table__,
         ],
     )

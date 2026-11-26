@@ -1,4 +1,4 @@
-"""Execution lifecycle for owner-scoped, stateless custom agents."""
+"""Execution lifecycle for owner-scoped custom agents."""
 
 from __future__ import annotations
 
@@ -7,9 +7,12 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import uuid4
 
+from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy import select
@@ -22,7 +25,8 @@ from app.core.context import (
     current_document_ids,
     current_user_id,
 )
-from app.models import Agent, Document, User
+from app.database import SessionLocal
+from app.models import Agent, Conversation, Document, User
 from app.schemas import (
     AgentExecutionErrorEvent,
     AgentInvokeRequest,
@@ -34,8 +38,13 @@ from app.schemas import (
     AgentToolCompletedEvent,
     AgentToolStartedEvent,
 )
+from app.services.agent_conversations import get_owned_agent_conversation
 from app.services.agents import get_owned_agent
-from app.services.conversations import validate_document_ids
+from app.services.conversations import (
+    conversation_document_ids,
+    lock_conversations,
+    validate_document_ids,
+)
 
 
 class AgentRunError(RuntimeError):
@@ -54,6 +63,18 @@ class AgentRunFailedError(AgentRunError):
     """A provider or tool failed without exposing its internal details."""
 
 
+class AgentRunCheckpointerUnavailableError(AgentRunError):
+    """Persistent execution has no lifespan-owned application checkpointer."""
+
+
+class AgentRunConversationAccessError(AgentRunError):
+    """The conversation changed or became inaccessible before execution."""
+
+
+class AgentRunIncompleteConversationError(AgentRunError):
+    """A prior graph run left pending work; appending another turn is unsafe."""
+
+
 @dataclass(frozen=True)
 class PreparedAgentExecution:
     """Prepared graph and immutable trusted context for one request."""
@@ -63,6 +84,8 @@ class PreparedAgentExecution:
     agent_id: int
     user_id: int
     message: str
+    conversation_id: int | None
+    thread_id: str | None
     document_ids: tuple[int, ...]
     document_context: str
     enabled_tool_names: frozenset[str]
@@ -93,6 +116,8 @@ def prepare_agent_execution(
     user: User,
     agent_id: int,
     data: AgentInvokeRequest,
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> PreparedAgentExecution:
     """Validate ownership and persisted settings before compiling the graph."""
 
@@ -100,8 +125,50 @@ def prepare_agent_execution(
     # repeats owner-scoped retrieval and persisted-config validation immediately
     # before it binds any model or tools.
     agent: Agent = get_owned_agent(db, user, agent_id)
-    document_ids = validate_document_ids(db, user, data.document_ids)
-    graph = build_agent_for_user(db, user, agent.id)
+    conversation: Conversation | None = None
+    if agent.memory_enabled is True:
+        if data.conversation_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="A conversation_id is required for this memory-enabled agent.",
+            )
+        if checkpointer is None:
+            raise AgentRunCheckpointerUnavailableError(
+                "The application checkpointer is unavailable."
+            )
+        conversation = get_owned_agent_conversation(
+            db,
+            user,
+            agent.id,
+            data.conversation_id,
+        )
+        selected_document_ids = (
+            conversation_document_ids(conversation)
+            if data.document_ids is None
+            else data.document_ids
+        )
+    else:
+        if data.conversation_id is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Stateless agents cannot use conversation identifiers.",
+            )
+        selected_document_ids = data.document_ids or []
+
+    # Ownership checks must happen before model/provider initialization or tool
+    # binding, including for memory-backed runs whose documents come from the
+    # conversation's saved defaults.
+    document_ids = validate_document_ids(db, user, selected_document_ids)
+
+    if conversation is not None:
+        graph = build_agent_for_user(
+            db,
+            user,
+            agent.id,
+            checkpointer=checkpointer,
+        )
+    else:
+        graph = build_agent_for_user(db, user, agent.id)
     names = agent.enabled_tools
     if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
         # The factory already rejects this persisted shape. Keep the execution
@@ -114,6 +181,8 @@ def prepare_agent_execution(
         agent_id=agent.id,
         user_id=user.id,
         message=data.message,
+        conversation_id=conversation.id if conversation is not None else None,
+        thread_id=conversation.thread_id if conversation is not None else None,
         document_ids=tuple(document_ids),
         document_context=_document_context(db, user.id, document_ids),
         enabled_tool_names=frozenset(names),
@@ -143,10 +212,38 @@ def _trusted_request_context(run: PreparedAgentExecution):
 
 
 def _runtime_config(run: PreparedAgentExecution) -> dict[str, object]:
-    return {
+    config: dict[str, object] = {
         "recursion_limit": run.recursion_limit,
         "max_concurrency": run.max_concurrency,
     }
+    if run.thread_id is not None:
+        config["configurable"] = {"thread_id": run.thread_id}
+    return config
+
+
+def _verify_locked_conversation(db: Session, run: PreparedAgentExecution) -> None:
+    if run.conversation_id is None or run.thread_id is None:
+        raise AgentRunConversationAccessError("Conversation not found.")
+    conversation = db.scalar(
+        select(Conversation).where(
+            Conversation.id == run.conversation_id,
+            Conversation.user_id == run.user_id,
+            Conversation.agent_id == run.agent_id,
+            Conversation.thread_id == run.thread_id,
+        )
+    )
+    if conversation is None:
+        raise AgentRunConversationAccessError("Conversation not found.")
+
+
+def _ensure_no_pending_checkpoint(run: PreparedAgentExecution) -> None:
+    if run.thread_id is None:
+        return
+    snapshot = run.graph.get_state(_runtime_config(run))
+    if getattr(snapshot, "next", ()):
+        raise AgentRunIncompleteConversationError(
+            "This conversation has unfinished work. Start a new conversation."
+        )
 
 
 def _message_text(content: object) -> str:
@@ -189,6 +286,7 @@ def _invoke_in_context(run: PreparedAgentExecution) -> AgentInvokeResponse:
             run_id=run.run_id,
             agent_id=run.agent_id,
             response=answer,
+            conversation_id=run.conversation_id,
         )
     except GraphRecursionError:
         raise AgentRunRecursionError(
@@ -215,12 +313,35 @@ def invoke_agent(run: PreparedAgentExecution) -> AgentInvokeResponse:
     result_queue: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
     cancelled = threading.Event()
 
+    def execute() -> AgentInvokeResponse:
+        if run.conversation_id is None:
+            return _invoke_in_context(run)
+
+        # This session uses the application's existing SQLAlchemy engine/pool.
+        # PostgreSQL advisory locks serialize the same thread across workers.
+        with SessionLocal() as db:
+            with lock_conversations(db, [run.conversation_id]):
+                _verify_locked_conversation(db, run)
+                _ensure_no_pending_checkpoint(run)
+                response = _invoke_in_context(run)
+                conversation = db.get(Conversation, run.conversation_id)
+                if conversation is None:
+                    raise AgentRunConversationAccessError("Conversation not found.")
+                conversation.updated_at = datetime.now(UTC)
+                db.commit()
+                return response
+
     def worker() -> None:
         try:
-            value: object = _invoke_in_context(run)
+            value: object = execute()
             outcome = (True, value)
         except AgentRunError as exc:
             outcome = (False, exc)
+        except Exception:  # noqa: BLE001 - sanitize unexpected provider/tool failures
+            outcome = (
+                False,
+                AgentRunFailedError("The agent could not complete this request."),
+            )
         if not cancelled.is_set():
             try:
                 result_queue.put_nowait(outcome)
@@ -254,13 +375,12 @@ def _tool_calls(message: object, allowed: frozenset[str]) -> list[tuple[str, str
     return calls
 
 
-def stream_agent_events(
+def _stream_graph_events(
     run: PreparedAgentExecution,
     cancelled: threading.Event,
 ) -> Iterator[AgentStreamEvent]:
-    """Yield a safe SSE event sequence from LangGraph's incremental stream."""
+    """Yield events for one graph run after any conversation lock is acquired."""
 
-    yield AgentRunStartedEvent(run_id=run.run_id, agent_id=run.agent_id)
     tool_calls: dict[str, str] = {}
     streamed_text = False
     final_answer = ""
@@ -354,3 +474,61 @@ def stream_agent_events(
                 code="execution_failed",
                 message="The agent could not complete this request.",
             )
+
+
+def stream_agent_events(
+    run: PreparedAgentExecution,
+    cancelled: threading.Event,
+) -> Iterator[AgentStreamEvent]:
+    """Serialize persistent runs and surface only stable, safe SSE events."""
+
+    yield AgentRunStartedEvent(
+        run_id=run.run_id,
+        agent_id=run.agent_id,
+        conversation_id=run.conversation_id,
+    )
+    if run.conversation_id is None:
+        yield from _stream_graph_events(run, cancelled)
+        return
+
+    try:
+        with SessionLocal() as db:
+            with lock_conversations(db, [run.conversation_id]):
+                _verify_locked_conversation(db, run)
+                _ensure_no_pending_checkpoint(run)
+                if cancelled.is_set():
+                    return
+
+                completed = False
+                for event in _stream_graph_events(run, cancelled):
+                    if event.type == "run_completed":
+                        conversation = db.get(Conversation, run.conversation_id)
+                        if conversation is None:
+                            raise AgentRunConversationAccessError(
+                                "Conversation not found."
+                            )
+                        conversation.updated_at = datetime.now(UTC)
+                        db.commit()
+                        completed = True
+                    yield event
+
+                if not completed:
+                    db.rollback()
+    except AgentRunConversationAccessError:
+        yield AgentExecutionErrorEvent(
+            run_id=run.run_id,
+            code="conversation_not_found",
+            message="Conversation not found.",
+        )
+    except AgentRunIncompleteConversationError:
+        yield AgentExecutionErrorEvent(
+            run_id=run.run_id,
+            code="conversation_incomplete",
+            message="This conversation has unfinished work. Start a new conversation.",
+        )
+    except Exception:  # noqa: BLE001 - database/checkpointer errors are sanitized
+        yield AgentExecutionErrorEvent(
+            run_id=run.run_id,
+            code="execution_failed",
+            message="The agent could not complete this request.",
+        )

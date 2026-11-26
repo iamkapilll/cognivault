@@ -5,14 +5,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.agent_config import validate_model_configuration
 from app.core.model_registry import ModelRegistryError
-from app.models import Agent, User
+from app.models import Agent, Conversation, User
 from app.schemas import AgentCreate, AgentUpdate
+from app.services.conversations import delete_conversation_thread, lock_conversations
 
 
 def _validate_model_configuration(
@@ -91,12 +93,30 @@ def update_agent(
 ) -> Agent:
     """Update an owned agent after validating the merged model settings."""
 
-    agent = get_owned_agent(db, user, agent_id)
+    agent = db.scalar(
+        select(Agent)
+        .where(Agent.id == agent_id, Agent.user_id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
     changes = data.model_dump(exclude_unset=True)
     provider = changes.get("model_provider", agent.model_provider)
     model_name = changes.get("model_name", agent.model_name)
     temperature = changes.get("temperature", agent.temperature)
     enabled_tools = changes.get("enabled_tools", agent.enabled_tools)
+    if agent.memory_enabled is True and changes.get("memory_enabled") is False:
+        # Conversation creation takes the same agent row lock, so this check
+        # cannot race with a new persistent conversation being inserted.
+        has_conversations = db.scalar(
+            select(Conversation.id).where(Conversation.agent_id == agent.id).limit(1)
+        )
+        if has_conversations is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Delete its conversations before disabling memory.",
+            )
     _validate_model_configuration(
         provider,
         model_name,
@@ -118,14 +138,42 @@ def update_agent(
     return agent
 
 
-def delete_agent(db: Session, user: User, agent_id: int) -> None:
-    """Delete an owned agent without exposing foreign agent identifiers."""
+def delete_agent(
+    db: Session,
+    user: User,
+    agent_id: int,
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> None:
+    """Delete the owned agent, conversations, and their exact checkpoint threads."""
 
-    agent = get_owned_agent(db, user, agent_id)
-    db.delete(agent)
+    agent = db.scalar(
+        select(Agent)
+        .where(Agent.id == agent_id, Agent.user_id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    conversations = list(
+        db.scalars(
+            select(Conversation)
+            .where(Conversation.agent_id == agent.id)
+            .order_by(Conversation.id)
+        ).all()
+    )
 
-    try:
-        db.commit()
-    except SQLAlchemyError:
-        db.rollback()
-        raise
+    with lock_conversations(db, [conversation.id for conversation in conversations]):
+        try:
+            for conversation in conversations:
+                delete_conversation_thread(
+                    db,
+                    conversation.thread_id,
+                    checkpointer=checkpointer,
+                )
+                db.delete(conversation)
+            db.delete(agent)
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise

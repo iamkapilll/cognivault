@@ -197,7 +197,10 @@ def list_conversations(
 ):
     conversations = db.scalars(
         select(Conversation)
-        .where(Conversation.user_id == current_user.id)
+        .where(
+            Conversation.user_id == current_user.id,
+            Conversation.agent_id.is_(None),
+        )
         .order_by(Conversation.updated_at.desc())
         .limit(100)
     ).all()

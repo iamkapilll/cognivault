@@ -109,6 +109,9 @@ class Agent(Base):
     )
 
     user: Mapped[User] = relationship("User", back_populates="agents")
+    conversations: Mapped[list[Conversation]] = relationship(
+        "Conversation", back_populates="agent", passive_deletes=True
+    )
 
 
 class Document(Base):
@@ -218,6 +221,13 @@ class Conversation(Base):
         nullable=False,
         index=True,
     )
+    # Null keeps existing startup-agent conversations distinguishable from
+    # custom-agent conversations without rewriting historical rows.
+    agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     thread_id: Mapped[str] = mapped_column(
         String(36), unique=True, index=True, nullable=False
     )
@@ -235,3 +245,4 @@ class Conversation(Base):
     )
 
     user: Mapped[User] = relationship("User", back_populates="conversations")
+    agent: Mapped[Agent | None] = relationship("Agent", back_populates="conversations")

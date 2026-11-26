@@ -6,8 +6,18 @@ import asyncio
 import queue
 import threading
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import StreamingResponse
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.orm import Session
 
 from app.agents.factory import (
@@ -20,8 +30,13 @@ from app.agents.factory import (
 )
 from app.core.dependencies import get_current_user
 from app.database import get_db
-from app.models import User
+from app.models import Conversation, User
 from app.schemas import (
+    AgentConversationCreate,
+    AgentConversationListResponse,
+    AgentConversationMessagesResponse,
+    AgentConversationRename,
+    AgentConversationResponse,
     AgentCreate,
     AgentExecutionErrorEvent,
     AgentInvokeRequest,
@@ -32,8 +47,19 @@ from app.schemas import (
     AgentStreamEvent,
     AgentUpdate,
 )
+from app.services.agent_conversations import (
+    checkpoint_messages,
+    create_agent_conversation,
+    delete_agent_conversation,
+    get_owned_agent_conversation,
+    list_agent_conversations,
+    rename_agent_conversation,
+)
 from app.services.agent_execution import (
+    AgentRunCheckpointerUnavailableError,
+    AgentRunConversationAccessError,
     AgentRunError,
+    AgentRunIncompleteConversationError,
     AgentRunRecursionError,
     AgentRunTimeoutError,
     PreparedAgentExecution,
@@ -48,6 +74,7 @@ from app.services.agents import (
     list_agents,
     update_agent,
 )
+from app.services.conversations import conversation_document_ids, lock_conversations
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -85,14 +112,38 @@ def _prepare_or_raise(
     current_user: User,
     agent_id: int,
     data: AgentInvokeRequest,
+    checkpointer: BaseCheckpointSaver | None,
 ) -> PreparedAgentExecution:
     try:
-        return prepare_agent_execution(db, current_user, agent_id, data)
+        return prepare_agent_execution(
+            db,
+            current_user,
+            agent_id,
+            data,
+            checkpointer=checkpointer,
+        )
     except AgentFactoryError as error:
         raise _factory_http_error(error) from None
+    except AgentRunCheckpointerUnavailableError:
+        raise HTTPException(
+            status_code=503,
+            detail="The application checkpointer is unavailable.",
+        ) from None
 
 
 def _invoke_http_error(error: AgentRunError) -> HTTPException:
+    if isinstance(error, AgentRunConversationAccessError):
+        return HTTPException(status_code=404, detail="Conversation not found.")
+    if isinstance(error, AgentRunIncompleteConversationError):
+        return HTTPException(
+            status_code=409,
+            detail="This conversation has unfinished work. Start a new conversation.",
+        )
+    if isinstance(error, AgentRunCheckpointerUnavailableError):
+        return HTTPException(
+            status_code=503,
+            detail="The application checkpointer is unavailable.",
+        )
     if isinstance(error, AgentRunTimeoutError):
         return HTTPException(status_code=504, detail="The agent execution timed out.")
     if isinstance(error, AgentRunRecursionError):
@@ -106,16 +157,22 @@ def _invoke_http_error(error: AgentRunError) -> HTTPException:
     )
 
 
-@router.post("/{agent_id}/invoke", response_model=AgentInvokeResponse)
+@router.post(
+    "/{agent_id}/invoke",
+    response_model=AgentInvokeResponse,
+    response_model_exclude_none=True,
+)
 def invoke_custom_agent(
     data: AgentInvokeRequest,
+    request: Request,
     agent_id: int = Path(ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AgentInvokeResponse:
-    """Run one owner-scoped custom-agent request without persistent memory."""
+    """Run one owner-scoped custom-agent turn."""
 
-    run = _prepare_or_raise(db, current_user, agent_id, data)
+    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
+    run = _prepare_or_raise(db, current_user, agent_id, data, checkpointer)
     try:
         return invoke_agent(run)
     except AgentRunError as error:
@@ -132,7 +189,8 @@ def stream_custom_agent(
 ) -> StreamingResponse:
     """Stream safe custom-agent events without blocking the ASGI event loop."""
 
-    run = _prepare_or_raise(db, current_user, agent_id, data)
+    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
+    run = _prepare_or_raise(db, current_user, agent_id, data, checkpointer)
     events: queue.Queue[AgentStreamEvent | None] = queue.Queue(maxsize=32)
     cancelled = threading.Event()
 
@@ -196,7 +254,7 @@ def stream_custom_agent(
                 if item is None:
                     return
                 event_name = item.type
-                payload = item.model_dump_json()
+                payload = item.model_dump_json(exclude_none=True)
                 yield f"event: {event_name}\ndata: {payload}\n\n"
                 if isinstance(item, (AgentRunCompletedEvent, AgentExecutionErrorEvent)):
                     return
@@ -213,6 +271,186 @@ def stream_custom_agent(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _conversation_payload(conversation: Conversation) -> AgentConversationResponse:
+    return AgentConversationResponse(
+        id=conversation.id,
+        agent_id=conversation.agent_id,
+        title=conversation.title,
+        document_ids=conversation_document_ids(conversation),
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+    )
+
+
+def _required_checkpointer(request: Request) -> BaseCheckpointSaver:
+    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
+    if checkpointer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The application checkpointer is unavailable.",
+        )
+    return checkpointer
+
+
+@router.post(
+    "/{agent_id}/conversations",
+    response_model=AgentConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_custom_agent_conversation(
+    request: Request,
+    data: AgentConversationCreate | None = None,
+    agent_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentConversationResponse:
+    agent = get_owned_agent(db, current_user, agent_id)
+    _required_checkpointer(request)
+    payload = data or AgentConversationCreate()
+    conversation = create_agent_conversation(
+        db,
+        current_user,
+        agent,
+        title=payload.title,
+        document_ids=payload.document_ids,
+    )
+    return _conversation_payload(conversation)
+
+
+@router.get(
+    "/{agent_id}/conversations",
+    response_model=AgentConversationListResponse,
+)
+def list_custom_agent_conversations(
+    agent_id: int = Path(ge=1),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentConversationListResponse:
+    get_owned_agent(db, current_user, agent_id)
+    conversations, total = list_agent_conversations(
+        db,
+        current_user,
+        agent_id,
+        offset=offset,
+        limit=limit,
+    )
+    return AgentConversationListResponse(
+        conversations=[_conversation_payload(item) for item in conversations],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/{agent_id}/conversations/{conversation_id}",
+    response_model=AgentConversationResponse,
+)
+def get_custom_agent_conversation(
+    agent_id: int = Path(ge=1),
+    conversation_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentConversationResponse:
+    get_owned_agent(db, current_user, agent_id)
+    conversation = get_owned_agent_conversation(
+        db,
+        current_user,
+        agent_id,
+        conversation_id,
+    )
+    return _conversation_payload(conversation)
+
+
+@router.get(
+    "/{agent_id}/conversations/{conversation_id}/messages",
+    response_model=AgentConversationMessagesResponse,
+)
+def custom_agent_conversation_messages(
+    request: Request,
+    agent_id: int = Path(ge=1),
+    conversation_id: int = Path(ge=1),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentConversationMessagesResponse:
+    get_owned_agent(db, current_user, agent_id)
+    checkpointer = _required_checkpointer(request)
+    try:
+        with lock_conversations(db, [conversation_id]):
+            conversation = get_owned_agent_conversation(
+                db,
+                current_user,
+                agent_id,
+                conversation_id,
+            )
+            messages = checkpoint_messages(checkpointer, conversation.thread_id)
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 - hide checkpointer/provider internals
+        raise HTTPException(
+            status_code=503,
+            detail="Conversation history is temporarily unavailable.",
+        ) from None
+    page = messages[offset : offset + limit]
+    return AgentConversationMessagesResponse(
+        conversation_id=conversation.id,
+        total=len(messages),
+        offset=offset,
+        limit=limit,
+        messages=page,
+    )
+
+
+@router.patch(
+    "/{agent_id}/conversations/{conversation_id}",
+    response_model=AgentConversationResponse,
+)
+def rename_custom_agent_conversation(
+    data: AgentConversationRename,
+    agent_id: int = Path(ge=1),
+    conversation_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentConversationResponse:
+    get_owned_agent(db, current_user, agent_id)
+    return _conversation_payload(
+        rename_agent_conversation(
+            db,
+            current_user,
+            agent_id,
+            conversation_id,
+            data.title,
+        )
+    )
+
+
+@router.delete(
+    "/{agent_id}/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_custom_agent_conversation(
+    request: Request,
+    agent_id: int = Path(ge=1),
+    conversation_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    get_owned_agent(db, current_user, agent_id)
+    checkpointer = _required_checkpointer(request)
+    delete_agent_conversation(
+        db,
+        current_user,
+        agent_id,
+        conversation_id,
+        checkpointer=checkpointer,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
@@ -254,9 +492,19 @@ def update_agent_endpoint(
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_agent_endpoint(
+    request: Request,
     agent_id: int = Path(ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    delete_agent(db, current_user, agent_id)
+    delete_agent(
+        db,
+        current_user,
+        agent_id,
+        checkpointer=getattr(
+            request.app.state,
+            "custom_agent_checkpointer",
+            None,
+        ),
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -82,6 +82,12 @@ class Settings:
         )
         self.custom_agent_recursion_limit = _as_int("CUSTOM_AGENT_RECURSION_LIMIT", 16)
         self.custom_agent_max_concurrency = _as_int("CUSTOM_AGENT_MAX_CONCURRENCY", 4)
+        self.custom_agent_context_max_messages = _as_int(
+            "CUSTOM_AGENT_CONTEXT_MAX_MESSAGES", 24
+        )
+        self.custom_agent_context_max_chars = _as_int(
+            "CUSTOM_AGENT_CONTEXT_MAX_CHARS", 32_000
+        )
         self.is_production = _as_bool("PRODUCTION", False)
 
     def validate(self) -> None:
@@ -107,6 +113,18 @@ class Settings:
             ),
             ("CUSTOM_AGENT_RECURSION_LIMIT", self.custom_agent_recursion_limit, 2, 100),
             ("CUSTOM_AGENT_MAX_CONCURRENCY", self.custom_agent_max_concurrency, 1, 16),
+            (
+                "CUSTOM_AGENT_CONTEXT_MAX_MESSAGES",
+                self.custom_agent_context_max_messages,
+                2,
+                100,
+            ),
+            (
+                "CUSTOM_AGENT_CONTEXT_MAX_CHARS",
+                self.custom_agent_context_max_chars,
+                4_000,
+                200_000,
+            ),
         )
         for name, value, minimum, maximum in limits:
             if not minimum <= value <= maximum:

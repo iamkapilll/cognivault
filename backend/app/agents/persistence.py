@@ -29,8 +29,15 @@ async def agent_lifespan(app: FastAPI):
     with PostgresSaver.from_conn_string(connection_string) as checkpointer:
         checkpointer.setup()
 
+        # One saver/pool is shared for the application's full lifespan. Dynamic
+        # custom-agent graphs reuse this instance instead of opening a pool per
+        # request.
+        app.state.custom_agent_checkpointer = checkpointer
         app.state.agent = build_agent(checkpointer)
 
         logger.info("Agent graph ready")
 
-        yield
+        try:
+            yield
+        finally:
+            del app.state.custom_agent_checkpointer

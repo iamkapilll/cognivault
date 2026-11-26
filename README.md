@@ -312,14 +312,55 @@ FastAPI routes are **not currently versioned**, except for the `/api/v1/health` 
 | `POST` | `/agent/chat` | Run an agent interaction without streaming |
 | `POST` | `/agent/chat/stream` | Stream tokens, tool events, approvals, and completion over SSE |
 | `POST` | `/agent/approve` | Approve or reject a pending agent action |
-| `POST` | `/agents/{agent_id}/invoke` | Execute one stateless custom-agent request |
-| `POST` | `/agents/{agent_id}/stream` | Stream one stateless custom-agent run as typed SSE events |
+| `POST` | `/agents/{agent_id}/invoke` | Execute a stateless or persistent custom-agent turn |
+| `POST` | `/agents/{agent_id}/stream` | Stream a stateless or persistent custom-agent turn as typed SSE events |
+| `POST` | `/agents/{agent_id}/conversations` | Create an owner-scoped conversation for an agent with memory enabled |
+| `GET` | `/agents/{agent_id}/conversations` | List the agent's conversations with offset/limit pagination |
+| `GET` | `/agents/{agent_id}/conversations/{conversation_id}` | Read owned conversation metadata |
+| `GET` | `/agents/{agent_id}/conversations/{conversation_id}/messages` | Read the paginated public user/assistant history |
+| `PATCH` | `/agents/{agent_id}/conversations/{conversation_id}` | Rename an owned conversation |
+| `DELETE` | `/agents/{agent_id}/conversations/{conversation_id}` | Delete an owned conversation and its checkpoint state |
 
 ## Custom agent execution
 
-Custom-agent execution is separate from the startup-built `/agent/chat` graph. Each request authenticates the session cookie, retrieves the saved agent through the owner-scoped service, validates its persisted provider/model/tool configuration, checks every selected document belongs to the caller, and builds an ephemeral graph through the dynamic factory. Trusted user and document context is set only around graph work and reset in a `finally` block. The custom graph has no checkpointer.
+Custom-agent execution is separate from the startup-built `/agent/chat` graph. Each request authenticates the session cookie, retrieves the saved agent through the owner-scoped service, validates its persisted provider/model/tool configuration, checks every selected document belongs to the caller before graph construction, and builds an ephemeral graph through the dynamic factory. Trusted user and document context is set only around graph work and reset in a `finally` block. The startup graph and custom graphs share the checkpointer owned by the FastAPI lifespan; only a custom agent saved with `memory_enabled: true` receives it. Existing `/agent/conversations` records remain distinct from custom-agent conversations through a nullable `conversations.agent_id` association.
 
-Only stateless agents are currently executable: set `memory_enabled` and `human_approval_required` to `false`, keep `is_active` true, and enable only tools shown by the server-side registry. Destructive document deletion is unavailable to custom agents because its approval/resume lifecycle is not implemented. An agent with no tools is supported.
+Persistent memory is available for custom agents when `memory_enabled` is true. Create a conversation first, then pass its numeric `conversation_id` with each invoke or stream request. The server resolves that ID to its private checkpoint thread; clients cannot set or receive raw LangGraph thread IDs. A stateless agent rejects conversation IDs, and a memory-enabled agent requires one. Conversations are scoped to both the authenticated owner and agent. Per-conversation PostgreSQL advisory locks serialize model runs, renames/deletes and other checkpoint changes across workers. Model prompts use a configurable recent-history budget (`CUSTOM_AGENT_CONTEXT_MAX_MESSAGES` and `CUSTOM_AGENT_CONTEXT_MAX_CHARS`); persisted history is not truncated. If a prior run left an unfinished LangGraph checkpoint, the server rejects another turn instead of appending to a potentially unsafe state. Human approval remains unsupported for custom agents; any agent with `human_approval_required: true` is rejected. Destructive document deletion remains unavailable. An agent with no tools is supported.
+
+### Custom-agent conversation lifecycle
+
+Conversation creation accepts an optional title and an optional list of document IDs. Document ownership is validated when the conversation is created and again when it is used. Omit `document_ids` from an invoke request to use the conversation's saved selection; supply it to choose another owned selection for that turn.
+
+```http
+POST /agents/8/conversations
+Content-Type: application/json
+
+{"title":"Quarterly review","document_ids":[12]}
+```
+
+```json
+{
+  "id": 31,
+  "agent_id": 8,
+  "title": "Quarterly review",
+  "document_ids": [12],
+  "created_at": "2026-11-26T10:30:00Z",
+  "updated_at": "2026-11-26T10:30:00Z"
+}
+```
+
+The response intentionally contains no internal checkpoint/thread identifier. Listing supports `offset` (default `0`) and `limit` (default `20`, maximum `100`) and returns `conversations`, `total`, `offset`, and `limit`. Message history uses the same pagination parameters with a default limit of `50` and maximum of `100`; it returns only non-empty user and final assistant text, never system instructions, tool arguments/results, or provider reasoning.
+
+```http
+POST /agents/8/invoke
+Content-Type: application/json
+
+{"message":"What did we decide about the delivery date?","conversation_id":31}
+```
+
+The invoke response includes that `conversation_id`. Streaming's `run_started` event also includes it. Both omit the checkpoint thread ID. Write endpoints retain the existing cookie authentication and Origin-based CSRF protection.
+
+The migration adding nullable `conversations.agent_id` has been generated as `b318a2f7c64e`. Review and apply it in the target environment using the project's normal migration procedure (for example, `alembic upgrade head` from `backend/`); it is intentionally not applied by this implementation. It preserves existing rows as legacy conversations with a null agent association. Downgrading removes only the association column; checkpoint rows are not modified by the migration.
 
 ### Invoke request and response
 
@@ -332,17 +373,18 @@ Only stateless agents are currently executable: set `memory_enabled` and `human_
 }
 ```
 
-`document_ids` is optional and defaults to an empty list. IDs must be positive, unique, owned by the authenticated user, and within the configured count limit. The response contains only the final assistant answer:
+`document_ids` is optional. Stateless agents default to an empty list; memory-enabled agents default to the conversation's saved selection. IDs must be positive, unique, owned by the authenticated user, and within the configured count limit. The response contains only the final assistant answer and includes `conversation_id` for persistent runs:
 
 ```json
 {
   "run_id": "c47bcacf-a2df-4fdc-9e4e-93915157c334",
   "agent_id": 8,
-  "response": "The report identifies three primary risks..."
+  "response": "The report identifies three primary risks...",
+  "conversation_id": 31
 }
 ```
 
-The endpoint returns `401` for an invalid session, `403` for an invalid or missing write Origin, `404` for an agent or selected document the user cannot access, `409` for an inactive agent, `422` for invalid configuration/input or unsupported memory/approval, `503` for an unavailable provider/tool, `502` for a run failure, and `504` when execution exceeds its deadline. Error bodies are sanitized.
+The endpoint returns `401` for an invalid session, `403` for an invalid or missing write Origin, `404` for an agent, conversation, or selected document the user cannot access, `409` for an inactive agent or an unfinished conversation checkpoint, `422` for invalid configuration/input or unsupported approval, `503` for an unavailable provider/tool/checkpointer, `502` for a run failure, and `504` when execution exceeds its deadline. Error bodies are sanitized.
 
 ### Streaming events
 

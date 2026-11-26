@@ -13,8 +13,10 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -29,6 +31,7 @@ from app.agents.factory import (
     UnavailableAgentProviderError,
     UnavailableAgentToolError,
     UnsupportedAgentCapabilityError,
+    _bounded_history,
     build_agent_for_user,
 )
 from app.core.agent_config import DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER
@@ -245,6 +248,106 @@ def test_builds_agent_with_saved_model_temperature_and_registered_tools(
     assert result["messages"][-1].content == "Mocked response"
     # Direct registry instances retain their own ContextVar authentication guard.
     assert model.bound_tools[0].invoke({"document_id": 1}) == "Not authenticated."
+
+
+def test_memory_graph_restores_prior_turns_from_its_attached_checkpointer(
+    agent_factory_database: AgentFactoryDatabase,
+    fake_chat_models: list[FakeChatModel],
+) -> None:
+    agent = save_agent(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        enabled_tools=[],
+        memory_enabled=True,
+    )
+    checkpointer = InMemorySaver()
+    graph = build_agent_for_user(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        agent.id,
+        checkpointer=checkpointer,
+    )
+    thread_id = "server-generated-test-thread"
+    config = {"configurable": {"thread_id": thread_id}}
+    token = current_user_id.set(agent_factory_database.owner.id)
+    try:
+        graph.invoke({"messages": [HumanMessage(content="First turn")]}, config)
+        graph.invoke({"messages": [HumanMessage(content="Second turn")]}, config)
+        state = graph.get_state(config)
+    finally:
+        current_user_id.reset(token)
+
+    model = fake_chat_models[0]
+    visible = [message for message in model.messages or [] if message.type != "system"]
+    assert [message.content for message in visible] == [
+        "First turn",
+        "Mocked response",
+        "Second turn",
+    ]
+    assert len(state.values["messages"]) == 4
+
+
+def test_context_budget_keeps_tool_pairs_or_compacts_oversized_latest_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "custom_agent_context_max_messages", 4)
+    monkeypatch.setattr(settings, "custom_agent_context_max_chars", 200)
+    messages = [
+        HumanMessage(content="Old turn"),
+        AIMessage(content="Old answer"),
+        HumanMessage(content="Current question"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "get_document_details",
+                    "args": {"document_id": 1},
+                    "id": "tool-1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content="Private tool result",
+            name="get_document_details",
+            tool_call_id="tool-1",
+        ),
+        AIMessage(content="Current answer"),
+    ]
+    bounded = _bounded_history(messages)
+    assert [message.type for message in bounded] == ["human", "ai", "tool", "ai"]
+    assert bounded[1].tool_calls[0]["id"] == bounded[2].tool_call_id
+    assert bounded[0].content == "Current question"
+
+    monkeypatch.setattr(settings, "custom_agent_context_max_chars", 30)
+    oversized = _bounded_history(
+        [
+            HumanMessage(content="question " * 20),
+            messages[3],
+            ToolMessage(
+                content="result " * 20,
+                name="get_document_details",
+                tool_call_id="tool-1",
+            ),
+            AIMessage(content="answer " * 20),
+        ]
+    )
+    assert [message.type for message in oversized] == ["human", "ai"]
+    assert sum(len(str(message.content)) for message in oversized) <= 30
+    assert all(not getattr(message, "tool_calls", None) for message in oversized)
+
+    oversized_block = _bounded_history(
+        [
+            HumanMessage(content="Question"),
+            ToolMessage(
+                content=[{"type": "image", "data": "x" * 100}],
+                name="document_preview",
+                tool_call_id="tool-2",
+            ),
+            AIMessage(content="Answer"),
+        ]
+    )
+    assert [message.type for message in oversized_block] == ["human", "ai"]
 
 
 @pytest.mark.parametrize(

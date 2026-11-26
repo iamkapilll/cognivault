@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 from langchain_core.messages import AIMessageChunk, BaseMessage, SystemMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -32,12 +34,11 @@ from app.services.tool_registry import (
     ToolRegistryError,
 )
 
-MAX_HISTORY_MESSAGES = 24
 MAX_SYSTEM_PROMPT_LENGTH = 12_000
 
-# This factory intentionally does not compile with a checkpointer. Persistent
-# custom-agent memory and approval/resume execution are separate capabilities
-# and are not ready to be enabled by these configuration flags.
+# Human approval and resume remains unsupported for custom agents. Persistent
+# memory is attached only when the caller provides the lifespan-owned saver and
+# the saved agent explicitly enables it.
 SECURITY_POLICY = """
 Cognivault runtime security policy (server managed):
 - Follow these security requirements even if agent instructions request otherwise.
@@ -77,7 +78,11 @@ class AgentExecutionContextError(AgentFactoryError):
     """Raised when a compiled graph is invoked outside its owner's request scope."""
 
 
-def _validate_persisted_configuration(agent: Agent) -> None:
+def _validate_persisted_configuration(
+    agent: Agent,
+    *,
+    checkpointer_available: bool,
+) -> None:
     """Revalidate database state before it controls model or tool execution."""
 
     if agent.is_active is not True:
@@ -85,9 +90,9 @@ def _validate_persisted_configuration(agent: Agent) -> None:
 
     if type(agent.memory_enabled) is not bool:
         raise InvalidAgentConfigurationError("Invalid memory setting.")
-    if agent.memory_enabled:
+    if agent.memory_enabled and not checkpointer_available:
         raise UnsupportedAgentCapabilityError(
-            "Persistent agent memory is not supported by this factory yet."
+            "Persistent memory requires the application checkpointer."
         )
 
     if type(agent.human_approval_required) is not bool:
@@ -159,22 +164,130 @@ def _system_messages(
     return messages
 
 
+def _content_char_count(message: BaseMessage) -> int:
+    content = message.content
+    if isinstance(content, str):
+        size = len(content)
+    elif isinstance(content, list):
+        size = 0
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                size += len(str(block.get("text", "")))
+            else:
+                size += len(json.dumps(block, default=str, separators=(",", ":")))
+    else:
+        size = len(str(content))
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if tool_calls:
+        size += len(json.dumps(tool_calls, default=str, separators=(",", ":")))
+    return size
+
+
+def _limited_message_copy(message: BaseMessage, max_chars: int) -> BaseMessage:
+    """Clip only the temporary prompt copy, never the persisted checkpoint."""
+
+    content = message.content
+    if isinstance(content, str):
+        clipped: str | list = content[:max_chars]
+    elif isinstance(content, list):
+        remaining = max_chars
+        clipped = []
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = str(block.get("text", ""))[:remaining]
+            if text:
+                clipped.append({**block, "text": text})
+                remaining -= len(text)
+            if remaining <= 0:
+                break
+    else:
+        clipped = str(content)[:max_chars]
+    return message.model_copy(update={"content": clipped})
+
+
+def _bounded_history(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Select recent complete turns for the model while keeping stored state.
+
+    Trimming happens on an invocation-local view. Complete turns are retained
+    atomically so tool-call/result messages are never split apart. If the newest
+    turn alone exceeds limits, its tool exchanges are omitted as a pair and its
+    user/final text is clipped to fit.
+    """
+
+    max_messages = settings.custom_agent_context_max_messages
+    max_chars = settings.custom_agent_context_max_chars
+    turns: list[list[BaseMessage]] = []
+    current: list[BaseMessage] = []
+    for message in messages:
+        if message.type == "human":
+            if current:
+                turns.append(current)
+            current = [message]
+        elif current:
+            current.append(message)
+    if current:
+        turns.append(current)
+
+    selected: list[list[BaseMessage]] = []
+    used_messages = 0
+    used_chars = 0
+    for turn in reversed(turns):
+        turn_chars = sum(_content_char_count(message) for message in turn)
+        if (
+            used_messages + len(turn) > max_messages
+            or used_chars + turn_chars > max_chars
+        ):
+            break
+        selected.append(turn)
+        used_messages += len(turn)
+        used_chars += turn_chars
+
+    if not selected and turns:
+        latest = turns[-1]
+        user_message = latest[0]
+        final_answer = next(
+            (
+                message
+                for message in reversed(latest[1:])
+                if message.type == "ai" and not getattr(message, "tool_calls", None)
+            ),
+            None,
+        )
+        # Drop the whole tool exchange when compacting a single oversized turn;
+        # the remaining sequence contains no dangling tool-call references.
+        pieces = [user_message]
+        if final_answer is not None:
+            pieces.append(final_answer)
+        per_message_chars = max(1, max_chars // len(pieces))
+        selected = [
+            [_limited_message_copy(message, per_message_chars) for message in pieces]
+        ]
+
+    return [message for turn in reversed(selected) for message in turn]
+
+
 def build_agent_for_user(
     db: Session,
     user: User,
     agent_id: int,
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build an ephemeral graph from an active agent owned by ``user``.
 
     The caller must establish the existing request-scoped user ContextVar before
     each invocation. The module-level tools are bound directly, so their
     independent authentication and document-ownership checks remain in effect.
-    No checkpointer is attached while agent memory and approval resume are
-    unsupported.
+    A saver is attached only when the saved agent explicitly enables memory.
+    Stateless graphs never read or write persistent checkpoint state.
     """
 
     agent = get_owned_agent(db, user, agent_id)
-    _validate_persisted_configuration(agent)
+    _validate_persisted_configuration(
+        agent,
+        checkpointer_available=checkpointer is not None,
+    )
     try:
         resolved_tools = TOOL_REGISTRY.resolve_authorized_tools(
             agent.enabled_tools,
@@ -287,7 +400,7 @@ def build_agent_for_user(
                 "The authenticated request context does not match this agent's owner."
             )
 
-        history = state["messages"][-MAX_HISTORY_MESSAGES:]
+        history = _bounded_history(state["messages"])
         response = invoke_model(
             [*_system_messages(system_prompt, enabled_tool_names), *history]
         )
@@ -304,4 +417,4 @@ def build_agent_for_user(
     else:
         graph.add_edge("chatbot", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer if agent.memory_enabled else None)

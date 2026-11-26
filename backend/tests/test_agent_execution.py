@@ -126,6 +126,8 @@ def make_run(
         agent_id=9,
         user_id=user_id,
         message=message,
+        conversation_id=None,
+        thread_id=None,
         document_ids=document_ids,
         document_context=f"owned document {document_ids}",
         enabled_tool_names=frozenset({"search_documents"}),
