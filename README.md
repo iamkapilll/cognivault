@@ -314,6 +314,11 @@ FastAPI routes are **not currently versioned**, except for the `/api/v1/health` 
 | `POST` | `/agent/approve` | Approve or reject a pending agent action |
 | `POST` | `/agents/{agent_id}/invoke` | Execute a stateless or persistent custom-agent turn |
 | `POST` | `/agents/{agent_id}/stream` | Stream a stateless or persistent custom-agent turn as typed SSE events |
+| `GET` | `/agents/{agent_id}/approvals` | List unexpired pending approvals for an owned agent |
+| `GET` | `/agents/{agent_id}/approvals/{approval_id}` | Read sanitized details for one owned approval |
+| `POST` | `/agents/{agent_id}/approvals/{approval_id}/approve` | Record an owner decision to approve the exact stored action |
+| `POST` | `/agents/{agent_id}/approvals/{approval_id}/reject` | Record an owner decision to reject the exact stored action |
+| `POST` | `/agents/{agent_id}/approvals/{approval_id}/resume` | Resume the matching paused graph as an SSE stream |
 | `POST` | `/agents/{agent_id}/conversations` | Create an owner-scoped conversation for an agent with memory enabled |
 | `GET` | `/agents/{agent_id}/conversations` | List the agent's conversations with offset/limit pagination |
 | `GET` | `/agents/{agent_id}/conversations/{conversation_id}` | Read owned conversation metadata |
@@ -323,9 +328,13 @@ FastAPI routes are **not currently versioned**, except for the `/api/v1/health` 
 
 ## Custom agent execution
 
-Custom-agent execution is separate from the startup-built `/agent/chat` graph. Each request authenticates the session cookie, retrieves the saved agent through the owner-scoped service, validates its persisted provider/model/tool configuration, checks every selected document belongs to the caller before graph construction, and builds an ephemeral graph through the dynamic factory. Trusted user and document context is set only around graph work and reset in a `finally` block. The startup graph and custom graphs share the checkpointer owned by the FastAPI lifespan; only a custom agent saved with `memory_enabled: true` receives it. Existing `/agent/conversations` records remain distinct from custom-agent conversations through a nullable `conversations.agent_id` association.
+Custom-agent execution is separate from the startup-built `/agent/chat` graph. Each request authenticates the session cookie, retrieves the saved agent through the owner-scoped service, revalidates provider/model/tool configuration, checks selected documents against the caller before graph construction, and builds an ephemeral graph through the dynamic factory. Trusted user and document context is set only around graph work and reset in a `finally` block. The startup graph and custom graphs share the checkpointer owned by the FastAPI lifespan; only custom agents saved with `memory_enabled: true` receive it. Existing `/agent/conversations` records remain distinct from custom-agent conversations through a nullable `conversations.agent_id` association.
 
-Persistent memory is available for custom agents when `memory_enabled` is true. Create a conversation first, then pass its numeric `conversation_id` with each invoke or stream request. The server resolves that ID to its private checkpoint thread; clients cannot set or receive raw LangGraph thread IDs. A stateless agent rejects conversation IDs, and a memory-enabled agent requires one. Conversations are scoped to both the authenticated owner and agent. Per-conversation PostgreSQL advisory locks serialize model runs, renames/deletes and other checkpoint changes across workers. Model prompts use a configurable recent-history budget (`CUSTOM_AGENT_CONTEXT_MAX_MESSAGES` and `CUSTOM_AGENT_CONTEXT_MAX_CHARS`); persisted history is not truncated. If a prior run left an unfinished LangGraph checkpoint, the server rejects another turn instead of appending to a potentially unsafe state. Human approval remains unsupported for custom agents; any agent with `human_approval_required: true` is rejected. Destructive document deletion remains unavailable. An agent with no tools is supported.
+Persistent memory is available for custom agents when `memory_enabled` is true. Create a conversation first, then pass its numeric `conversation_id` with each invoke or stream request. The server resolves that ID to its private checkpoint thread; clients cannot set or receive raw LangGraph thread IDs. A stateless agent rejects conversation IDs, and a memory-enabled agent requires one. Conversations are scoped to both the authenticated owner and agent. Per-conversation PostgreSQL advisory locks serialize model runs, approvals, renames, deletes and checkpoint changes across workers. Model prompts use a configurable recent-history budget (`CUSTOM_AGENT_CONTEXT_MAX_MESSAGES` and `CUSTOM_AGENT_CONTEXT_MAX_CHARS`); persisted history is not truncated. If a prior run left an unfinished checkpoint, another user turn is rejected until the approval workflow resumes or safely rejects it.
+
+For custom agents, `human_approval_required: true` means every tool call pauses for an explicit owner decision. Even when it is false, the server always requires approval for tools classified as side-effecting, high risk, or destructive. Approval-capable agents must have persistent memory and a server-owned PostgreSQL checkpointer. `delete_document` is available to custom agents only through a custom-specific implementation behind the approval gate; the startup-built legacy graph keeps its existing interrupt implementation. An agent with no tools is supported.
+
+The runtime validates every model tool call with the registered Pydantic tool schema, rejects parallel tool batches, enforces the server tool allowlist, and independently verifies document ownership before the call. Approval records store the exact normalized tool arguments and a SHA-256 digest, but approval APIs expose only a safe action summary. The resume route uses the server-held conversation/checkpoint association, verifies the matching LangGraph interrupt, and resumes with a server-built `Command`; clients cannot submit arguments or thread IDs. The graph checks the stored owner decision and argument digest again, rechecks document ownership, and atomically claims each approved execution. If a claimed side effect has an uncertain outcome, the call is not retried automatically. These controls reduce prompt-injection risk but cannot eliminate it; authorization is enforced in database and tool code, not by system prompts.
 
 ### Custom-agent conversation lifecycle
 
@@ -360,7 +369,7 @@ Content-Type: application/json
 
 The invoke response includes that `conversation_id`. Streaming's `run_started` event also includes it. Both omit the checkpoint thread ID. Write endpoints retain the existing cookie authentication and Origin-based CSRF protection.
 
-The migration adding nullable `conversations.agent_id` has been generated as `b318a2f7c64e`. Review and apply it in the target environment using the project's normal migration procedure (for example, `alembic upgrade head` from `backend/`); it is intentionally not applied by this implementation. It preserves existing rows as legacy conversations with a null agent association. Downgrading removes only the association column; checkpoint rows are not modified by the migration.
+Phase 1.7 adds revision `f6a71d9c2b40` after `b318a2f7c64e`. The migration creates `agent_approvals` and `agent_audit_events`; it does not rewrite conversations or checkpoint data. Review and apply it in the intended environment using the project's normal procedure (for example, `alembic upgrade head` from `backend/`). The migration is not automatically applied by the application or test suite. Downgrading removes only the two new tables.
 
 ### Invoke request and response
 
@@ -384,7 +393,7 @@ The migration adding nullable `conversations.agent_id` has been generated as `b3
 }
 ```
 
-The endpoint returns `401` for an invalid session, `403` for an invalid or missing write Origin, `404` for an agent, conversation, or selected document the user cannot access, `409` for an inactive agent or an unfinished conversation checkpoint, `422` for invalid configuration/input or unsupported approval, `503` for an unavailable provider/tool/checkpointer, `502` for a run failure, and `504` when execution exceeds its deadline. Error bodies are sanitized.
+For a tool-approval pause, `/invoke` returns an `approval_required` result containing the safe approval summary instead of a final response. Otherwise it returns the final assistant answer. The endpoint returns `401` for an invalid session, `403` for an invalid or missing write Origin, `404` for an agent, conversation, approval, or selected document the user cannot access, `409` for an inactive agent, an expired/decided approval, or an unfinished checkpoint, `422` for invalid configuration/input, `503` for an unavailable provider/tool/checkpointer, `502` for a run failure, and `504` when execution exceeds its deadline. Error bodies are sanitized.
 
 ### Streaming events
 
@@ -410,7 +419,47 @@ event: run_completed
 data: {"type":"run_completed","run_id":"..."}
 ```
 
-The event types are `run_started`, `text_delta`, `tool_started`, `tool_completed`, `run_completed`, and `error`. Tool arguments, tool results, model reasoning, prompts, and credentials are never placed in events. Completion does not repeat the text already sent in deltas. A run failure after streaming begins becomes a generic `error` event with a stable code.
+The event types are `run_started`, `text_delta`, `tool_started`, `tool_completed`, `approval_required`, `run_paused`, `run_resumed`, `approval_rejected`, `run_completed`, and `error`. Approval events include a server-generated approval ID, tool name, and safe action summary, never the stored raw arguments or checkpoint internals. Tool arguments/results, model reasoning, prompts, and credentials are not placed in events. To allow whole-answer credential scanning, custom-agent text deltas are withheld until a model turn completes; event names and JSON shapes remain compatible. A run failure after streaming begins becomes a generic `error` event with a stable code.
+
+### Approval endpoints and lifecycle
+
+The approval endpoints use the same HttpOnly cookie authentication and write-Origin CSRF protection as other mutating routes. `GET /agents/{agent_id}/approvals` returns only unexpired pending requests for that owner and agent. `GET /agents/{agent_id}/approvals/{approval_id}` returns sanitized details. Approve and reject endpoints accept no request body, so a client cannot replace the stored arguments. After recording a decision, call the matching `/resume` route to continue the paused conversation as SSE.
+
+Example flow:
+
+```http
+GET /agents/8/approvals
+```
+
+```json
+{
+  "approvals": [
+    {
+      "id": "95b7fe13-4cea-5ed4-8795-42e62a601aad",
+      "agent_id": 8,
+      "conversation_id": 31,
+      "run_id": "c47bcacf-a2df-4fdc-9e4e-93915157c334",
+      "tool_name": "delete_document",
+      "status": "pending",
+      "action_summary": "Permanently delete 'report.pdf' (document 12).",
+      "created_at": "2026-11-26T10:30:00Z",
+      "expires_at": "2026-11-26T10:45:00Z",
+      "decided_at": null,
+      "executed_at": null
+    }
+  ],
+  "total": 1
+}
+```
+
+Then make the owner decision and resume with no client-provided arguments:
+
+```http
+POST /agents/8/approvals/95b7fe13-4cea-5ed4-8795-42e62a601aad/approve
+POST /agents/8/approvals/95b7fe13-4cea-5ed4-8795-42e62a601aad/resume
+```
+
+Approvals expire after 15 minutes. Decisions are one-way, resume is tied to the exact pending checkpoint interrupt, and an execution claim cannot be reused. Agent or conversation deletion cascades to approval rows and existing conversation cleanup deletes the corresponding checkpoint thread. Audit rows retain only owner-scoped lifecycle identifiers, tool name, outcome and safe metadata; they never store prompts or tool arguments. Audit records remain until the user account is deleted, at which point the user foreign key cascades and removes them. No scheduled audit-retention job is configured yet.
 
 ### Browser calls and CSRF
 
@@ -449,11 +498,25 @@ curl -N -b agent-cookies.txt -X POST http://localhost:8000/agents/AGENT_ID/strea
 
 Replace `AGENT_ID` with the ID returned when the agent is created. Configure the selected provider credential in `backend/.env`; all calls above use the server-managed key.
 
+For a destructive-action check, create a custom agent with `memory_enabled: true` and `enabled_tools: ["delete_document"]`, create an agent conversation, and invoke it with that `conversation_id` and an owned `document_id` in the request context. The stream or invoke response should return a pending approval without deleting the file. List the approval, then approve or reject it and resume:
+
+```bash
+curl -b agent-cookies.txt http://localhost:8000/agents/AGENT_ID/approvals
+
+curl -b agent-cookies.txt -X POST http://localhost:8000/agents/AGENT_ID/approvals/APPROVAL_UUID/approve \
+  -H 'Origin: http://localhost:3000'
+
+curl -N -b agent-cookies.txt -X POST http://localhost:8000/agents/AGENT_ID/approvals/APPROVAL_UUID/resume \
+  -H 'Origin: http://localhost:3000'
+```
+
+Use `/reject` instead of `/approve` to verify that the document remains. The approval ID comes from the approval response; there is no client-supplied tool argument or checkpoint thread ID in this flow.
+
 ### Limits and security considerations
 
-The defaults are 4,000 message characters, 20 selected documents, a 90-second execution/provider request timeout, a 16-step LangGraph recursion limit, and at most 4 concurrent tool calls. Each setting is configurable through the `CUSTOM_AGENT_*` environment variables above and checked against a server-side range. These controls do not replace production rate limiting, quotas, or provider spend controls.
+The defaults are 4,000 message characters, 20 selected documents, a 90-second execution/provider request timeout, and a 16-step LangGraph recursion limit. Each setting is configurable through the `CUSTOM_AGENT_*` environment variables above and checked against a server-side range. For safety, a custom agent executes at most one tool call from each model response; the graph's `max_concurrency` remains bounded as an additional runtime limit. These controls do not replace production rate limiting, quotas, or provider spend controls.
 
-Invocation and streaming run synchronous LangGraph/provider/tool work in worker threads so they do not block the ASGI event loop. Model SDK request timeouts and a server-side execution deadline are configured. Python cannot forcibly terminate a synchronous SDK or external tool call already in progress; after a client disconnect or deadline, cancellation is cooperative between graph events and a daemon worker may continue until that call returns. Tool concurrency remains bounded by LangGraph's `max_concurrency` setting.
+Invocation and streaming run synchronous LangGraph/provider/tool work in worker threads so they do not block the ASGI event loop. Model SDK request timeouts and a server-side execution deadline are configured. Python cannot forcibly terminate a synchronous SDK or external tool call already in progress; after a client disconnect or deadline, cancellation is cooperative between graph events and a daemon worker may continue until that call returns. Tool execution is serialized per model response and remains bounded by LangGraph's `max_concurrency` setting.
 
 Document content selected for a run can be sent to the configured model provider. Web/research tools can send query text to Tavily, and summarization/comparison/report tools may send extracted document content to the configured Groq service. Keep provider data-retention terms in mind and enable only tools needed for the agent. Retrieved document and web text are treated as untrusted input, but prompt-injection risks cannot be eliminated by prompt instructions alone; SQL ownership checks and the server tool allowlist remain the authorization boundary.
 
@@ -488,7 +551,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-**Locally verified results:** backend tests passed (**124 passed**), Ruff lint passed, and Ruff format check passed (**47 files**). Frontend regression tests passed (**1 passed**), ESLint and TypeScript checks passed, and the production Next.js build completed. The frontend production dependency audit reported no vulnerabilities; the full development dependency audit reported moderate advisories in a transitive lint-tool dependency. These are local results, not a claim that the hosted GitHub Actions workflow has run.
+**Locally verified results:** backend tests passed (**214 passed**), Ruff lint passed, and Ruff format check is checked separately for the current source tree. Frontend regression tests passed (**1 passed**), ESLint and TypeScript checks passed, and the production Next.js build completed in the prior frontend verification. The frontend production dependency audit reported no vulnerabilities; the full development dependency audit reported moderate advisories in a transitive lint-tool dependency. These are local results, not a claim that the hosted GitHub Actions workflow has run.
 
 To validate the main user flows manually, start PostgreSQL and both development servers, register an account, reload to check session persistence, upload a searchable PDF and an image/scanned PDF, inspect extracted text and candidate analysis, ask a RAG question and check its sources, reopen a conversation, and request a deletion to test approve/reject behavior. A second account can be used to verify that foreign document and conversation IDs are not accessible.
 

@@ -336,3 +336,36 @@ def delete_document(document_id: int) -> str:
             )
 
     return f"Document '{filename}' was deleted successfully."
+
+
+@tool("delete_document")
+def delete_document_after_approval(document_id: int) -> str:
+    """Delete an owned document after the custom-agent approval gate passes."""
+    user_id = _current_user_id()
+    if user_id is None:
+        return "Not authenticated."
+
+    # The custom graph has already checked the approval record. Ownership is
+    # queried again here, immediately before the database side effect, so a
+    # stale approval cannot delete a document whose ownership has changed.
+    with SessionLocal() as db:
+        document = _owned_document(db, document_id, user_id)
+        if document is None:
+            return "Document no longer exists or is not accessible."
+
+        file_path = document.file_path
+        filename = document.filename
+        safe_path = safe_upload_path(file_path) if file_path else None
+        if file_path and safe_path is None:
+            return "Deletion blocked: unsafe stored file path."
+
+        db.delete(document)
+        db.commit()
+
+    if safe_path is not None:
+        try:
+            safe_path.unlink(missing_ok=True)
+        except OSError:
+            return "The document record was deleted; stored-file cleanup is pending."
+
+    return f"Document '{filename}' was deleted successfully."

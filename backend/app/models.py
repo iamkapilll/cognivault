@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
@@ -246,3 +247,79 @@ class Conversation(Base):
 
     user: Mapped[User] = relationship("User", back_populates="conversations")
     agent: Mapped[Agent | None] = relationship("Agent", back_populates="conversations")
+
+
+class AgentApproval(Base):
+    """Immutable, owner-scoped approval for one exact custom-agent tool call."""
+
+    __tablename__ = "agent_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "run_id",
+            "tool_call_id",
+            name="uq_agent_approval_run_tool_call",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(sa.Uuid(as_uuid=True), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    tool_call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    validated_arguments: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    arguments_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    context_document_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), default="pending", server_default="pending", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    executed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AgentAuditEvent(Base):
+    """Safe lifecycle metadata for custom-agent approval and security events."""
+
+    __tablename__ = "agent_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approval_id: Mapped[UUID | None] = mapped_column(
+        sa.Uuid(as_uuid=True), nullable=True
+    )
+    tool_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    safe_metadata: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=dict, server_default=sa.text("'{}'"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )

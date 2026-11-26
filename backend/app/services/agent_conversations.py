@@ -8,11 +8,11 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models import Agent, Conversation, User
+from app.models import Agent, AgentApproval, Conversation, User
 from app.services.conversations import (
     delete_conversation_thread,
     lock_conversations,
@@ -180,6 +180,13 @@ def delete_agent_conversation(
             db,
             conversation.thread_id,
             checkpointer=checkpointer,
+        )
+        db.execute(
+            delete(AgentApproval).where(
+                AgentApproval.user_id == user.id,
+                AgentApproval.agent_id == agent_id,
+                AgentApproval.conversation_id == conversation_id,
+            )
         )
         db.delete(conversation)
         try:

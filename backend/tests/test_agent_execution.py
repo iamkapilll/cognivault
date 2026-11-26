@@ -226,6 +226,48 @@ def test_stream_graph_errors_are_sanitized() -> None:
     assert "private prompt" not in events[-1].model_dump_json()
 
 
+def test_invoke_filters_credential_shaped_final_output() -> None:
+    secret = "gsk_" + "a" * 28
+    response = _invoke_in_context(make_run(FakeGraph(answer=f"Key: {secret}")))
+
+    assert response.response == "Key: [REDACTED]"
+    assert secret not in response.response
+
+
+def test_stream_filters_credentials_split_across_provider_chunks() -> None:
+    secret = "gsk_" + "a" * 28
+
+    class SecretChunkGraph(FakeGraph):
+        def stream(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> Iterator[tuple[str, Any]]:
+            yield (
+                "custom",
+                {
+                    "cognivault_event": "text_delta",
+                    "text": f"Key: {secret[:8]}",
+                },
+            )
+            yield (
+                "custom",
+                {
+                    "cognivault_event": "text_delta",
+                    "text": secret[8:],
+                },
+            )
+            yield (
+                "updates",
+                {"chatbot": {"messages": [AIMessage(content=f"Key: {secret}")]}},
+            )
+
+    events = list(stream_agent_events(make_run(SecretChunkGraph()), threading.Event()))
+    text = "".join(event.text for event in events if event.type == "text_delta")
+    assert text == "Key: [REDACTED]"
+    assert secret not in " ".join(event.model_dump_json() for event in events)
+
+
 def test_invoke_deadline_returns_timeout_without_waiting_for_blocked_graph() -> None:
     completed = threading.Event()
 

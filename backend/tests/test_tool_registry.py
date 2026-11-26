@@ -18,7 +18,6 @@ from app.services.tool_registry import (
     ToolAvailabilityStatus,
     ToolCategory,
     ToolConfigurationUnavailableError,
-    ToolDisabledError,
     ToolEffect,
     ToolRegistry,
     ToolRiskLevel,
@@ -68,7 +67,7 @@ def test_metadata_categorizes_risk_effect_authentication_and_configuration() -> 
     assert deletion.risk_level is ToolRiskLevel.DESTRUCTIVE
     assert deletion.effect is ToolEffect.SIDE_EFFECTING
     assert deletion.requires_human_approval is True
-    assert deletion.enabled_for_custom_agents is False
+    assert deletion.enabled_for_custom_agents is True
 
 
 def test_tool_availability_tracks_required_server_configuration(
@@ -182,21 +181,25 @@ def test_approval_required_tool_is_rejected_by_custom_agent_runtime() -> None:
         )
 
 
-def test_disabled_destructive_tool_stays_unavailable_to_custom_agents() -> None:
+def test_destructive_tool_is_available_only_when_approval_runtime_is_enabled() -> None:
     assert (
         TOOL_REGISTRY.get_availability(
             "delete_document",
             custom_agent=True,
-            human_approval_available=True,
+            human_approval_available=False,
         )
-        is ToolAvailabilityStatus.DISABLED
+        is ToolAvailabilityStatus.APPROVAL_UNAVAILABLE
     )
-    with pytest.raises(ToolDisabledError):
-        TOOL_REGISTRY.resolve_authorized_tools(
-            ["delete_document"],
-            authenticated_user_id=42,
-            human_approval_available=True,
-        )
+    resolved = TOOL_REGISTRY.resolve_authorized_tools(
+        ["delete_document"],
+        authenticated_user_id=42,
+        human_approval_available=True,
+    )
+    assert resolved[0].name == "delete_document"
+    assert (
+        resolved[0]
+        is TOOL_REGISTRY.get_registration("delete_document").custom_agent_implementation
+    )
 
 
 def test_registry_can_describe_tools_in_the_startup_approval_runtime() -> None:

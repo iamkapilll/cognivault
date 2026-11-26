@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +25,17 @@ from app.core.config import settings
 from app.core.security import COOKIE_NAME, create_access_token
 from app.database import Base, get_db
 from app.main import app
-from app.models import Agent, AuthSession, Conversation, Document, User
-from app.services import agent_execution
+from app.models import (
+    Agent,
+    AgentApproval,
+    AgentAuditEvent,
+    AuthSession,
+    Conversation,
+    Document,
+    User,
+)
+from app.services import agent_execution, agent_tools
+from app.services.agent_approvals import as_utc
 
 ORIGIN_HEADER = {"Origin": "http://localhost:3000"}
 
@@ -67,6 +76,8 @@ def agent_api() -> Iterator[AgentTestClient]:
             Agent.__table__,
             Conversation.__table__,
             Document.__table__,
+            AgentApproval.__table__,
+            AgentAuditEvent.__table__,
         ],
     )
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -79,10 +90,12 @@ def agent_api() -> Iterator[AgentTestClient]:
     had_checkpointer = hasattr(app.state, "custom_agent_checkpointer")
     previous_checkpointer = getattr(app.state, "custom_agent_checkpointer", None)
     previous_session_local = agent_execution.SessionLocal
+    previous_tool_session_local = agent_tools.SessionLocal
     checkpointer = InMemorySaver()
     app.dependency_overrides[get_db] = override_get_db
     app.state.custom_agent_checkpointer = checkpointer
     agent_execution.SessionLocal = session_factory
+    agent_tools.SessionLocal = session_factory
     try:
         with session_factory.begin() as db:
             first_user = User(
@@ -99,6 +112,7 @@ def agent_api() -> Iterator[AgentTestClient]:
         yield AgentTestClient(TestClient(app), session_factory, *ids, checkpointer)
     finally:
         agent_execution.SessionLocal = previous_session_local
+        agent_tools.SessionLocal = previous_tool_session_local
         if had_checkpointer:
             app.state.custom_agent_checkpointer = previous_checkpointer
         else:
@@ -122,6 +136,35 @@ class FakeModel:
 
     def invoke(self, messages: object) -> AIMessage:
         self.invocations.append(messages)
+        return AIMessage(content=self.answer)
+
+
+class FakeToolModel(FakeModel):
+    def __init__(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        *,
+        answer: str = "The action finished.",
+    ) -> None:
+        super().__init__(answer=answer)
+        self.tool_name = tool_name
+        self.arguments = arguments
+
+    def invoke(self, messages: object) -> AIMessage:
+        self.invocations.append(messages)
+        if len(self.invocations) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": self.tool_name,
+                        "args": self.arguments,
+                        "id": "test-call-1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
         return AIMessage(content=self.answer)
 
 
@@ -170,6 +213,60 @@ def create_executable_agent(
     response = api.client.post("/agents", json=payload, headers=ORIGIN_HEADER)
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def _start_delete_approval(
+    api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    streamed: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int, FakeToolModel]:
+    with api.session_factory.begin() as db:
+        document = Document(
+            user_id=api.first_user_id,
+            filename="approval-target.pdf",
+            status="completed",
+        )
+        db.add(document)
+        db.flush()
+        document_id = document.id
+
+    model = FakeToolModel("delete_document", {"document_id": document_id})
+    mock_factory_model(monkeypatch, model)
+    agent = create_executable_agent(
+        api,
+        enabled_tools=["delete_document"],
+        memory_enabled=True,
+        human_approval_required=False,
+    )
+    conversation_response = api.client.post(
+        f"/agents/{agent['id']}/conversations",
+        json={},
+        headers=ORIGIN_HEADER,
+    )
+    assert conversation_response.status_code == 201, conversation_response.text
+    conversation = conversation_response.json()
+    endpoint = (
+        f"/agents/{agent['id']}/stream" if streamed else f"/agents/{agent['id']}/invoke"
+    )
+    response = api.client.post(
+        endpoint,
+        json={"message": "Delete my document", "conversation_id": conversation["id"]},
+        headers=ORIGIN_HEADER,
+    )
+    assert response.status_code == 200, response.text
+    if streamed:
+        assert "event: approval_required" in response.text
+        assert "event: run_paused" in response.text
+        approval = api.client.get(
+            f"/agents/{agent['id']}/approvals",
+            headers=ORIGIN_HEADER,
+        ).json()["approvals"][0]
+    else:
+        payload = response.json()
+        assert payload["status"] == "approval_required"
+        approval = payload["approval"]
+    return agent, conversation, approval, document_id, model
 
 
 def mock_factory_model(monkeypatch: pytest.MonkeyPatch, model: FakeModel) -> None:
@@ -600,7 +697,14 @@ def test_memory_and_approval_settings_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
     capability: str,
 ) -> None:
-    agent = create_executable_agent(agent_api, **{capability: True})
+    if capability == "human_approval_required":
+        agent = create_executable_agent(
+            agent_api,
+            memory_enabled=True,
+            human_approval_required=True,
+        )
+    else:
+        agent = create_executable_agent(agent_api, memory_enabled=True)
     model = FakeModel()
     mock_factory_model(monkeypatch, model)
 
@@ -618,7 +722,11 @@ def test_destructive_tool_is_rejected_for_custom_execution(
     agent_api: AgentTestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = create_executable_agent(agent_api, enabled_tools=["delete_document"])
+    agent = create_executable_agent(
+        agent_api,
+        enabled_tools=["delete_document"],
+        memory_enabled=True,
+    )
     model = FakeModel()
     mock_factory_model(monkeypatch, model)
 
@@ -853,3 +961,295 @@ def test_factory_uses_configured_provider_request_timeout(
 
     assert response.status_code == 200
     assert calls[0]["request_timeout"] == 37.0
+
+
+def test_custom_destructive_call_is_persisted_and_paused_before_execution(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    listed = agent_api.client.get(
+        f"/agents/{agent['id']}/approvals",
+        headers=ORIGIN_HEADER,
+    )
+    detailed = agent_api.client.get(
+        f"/agents/{agent['id']}/approvals/{approval['id']}",
+        headers=ORIGIN_HEADER,
+    )
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert detailed.status_code == 200
+    assert detailed.json()["action_summary"] == (
+        f"Permanently delete 'approval-target.pdf' (document {document_id})."
+    )
+    assert "validated_arguments" not in detailed.json()
+    assert len(model.invocations) == 1
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+        stored = db.get(AgentApproval, UUID(approval["id"]))
+        assert stored is not None
+        assert stored.status == "pending"
+        assert stored.validated_arguments == {"document_id": document_id}
+        assert stored.arguments_sha256
+        assert as_utc(stored.expires_at) > datetime.now(UTC)
+        assert (
+            db.query(AgentAuditEvent).filter_by(event_type="approval_requested").count()
+            == 1
+        )
+
+
+def test_approved_action_resumes_once_and_cannot_be_replayed(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    approval_path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    decided = agent_api.client.post(
+        f"{approval_path}/approve",
+        headers=ORIGIN_HEADER,
+    )
+    assert decided.status_code == 200
+    assert decided.json()["approval"]["status"] == "approved"
+
+    resumed = agent_api.client.post(f"{approval_path}/resume", headers=ORIGIN_HEADER)
+    assert resumed.status_code == 200
+    assert "event: run_resumed" in resumed.text
+    assert "event: run_completed" in resumed.text
+    assert "event: error" not in resumed.text
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is None
+        stored = db.get(AgentApproval, UUID(approval["id"]))
+        assert stored is not None
+        assert stored.status == "executed"
+        assert stored.executed_at is not None
+
+    replay = agent_api.client.post(f"{approval_path}/resume", headers=ORIGIN_HEADER)
+    assert replay.status_code == 409
+
+
+def test_rejected_action_resumes_without_execution_and_emits_event(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    approval_path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    rejected = agent_api.client.post(
+        f"{approval_path}/reject",
+        headers=ORIGIN_HEADER,
+    )
+    assert rejected.status_code == 200
+    resumed = agent_api.client.post(f"{approval_path}/resume", headers=ORIGIN_HEADER)
+    assert resumed.status_code == 200
+    assert "event: approval_rejected" in resumed.text
+    assert "event: run_completed" in resumed.text
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+        assert db.get(AgentApproval, UUID(approval["id"])).status == "rejected"
+
+
+def test_approval_routes_enforce_authentication_and_owner_agent_scope(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, _document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    approval_path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    agent_api.client.cookies.clear()
+    unauthenticated = agent_api.client.get(
+        f"/agents/{agent['id']}/approvals",
+        headers=ORIGIN_HEADER,
+    )
+    assert unauthenticated.status_code == 401
+
+    agent_api.authenticate(agent_api.second_user_id)
+    cross_user = agent_api.client.post(
+        f"{approval_path}/approve",
+        headers=ORIGIN_HEADER,
+    )
+    assert cross_user.status_code == 404
+
+    agent_api.authenticate(agent_api.first_user_id)
+    other_agent = create_executable_agent(agent_api, memory_enabled=True)
+    cross_agent = agent_api.client.get(
+        f"/agents/{other_agent['id']}/approvals/{approval['id']}",
+        headers=ORIGIN_HEADER,
+    )
+    assert cross_agent.status_code == 404
+
+
+def test_expired_approval_cannot_be_decided_or_resumed(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    with agent_api.session_factory.begin() as db:
+        stored = db.get(AgentApproval, UUID(approval["id"]))
+        assert stored is not None
+        stored.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    decided = agent_api.client.post(f"{path}/approve", headers=ORIGIN_HEADER)
+    assert decided.status_code == 409
+    resumed = agent_api.client.post(f"{path}/resume", headers=ORIGIN_HEADER)
+    assert resumed.status_code == 200
+    assert "event: run_completed" in resumed.text
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+        assert db.get(AgentApproval, UUID(approval["id"])).status == "expired"
+
+
+def test_conflicting_approval_decisions_are_rejected(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, _document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    approved = agent_api.client.post(f"{path}/approve", headers=ORIGIN_HEADER)
+    rejected = agent_api.client.post(f"{path}/reject", headers=ORIGIN_HEADER)
+    assert approved.status_code == 200
+    assert rejected.status_code == 409
+
+
+def test_changed_document_ownership_invalidates_approved_action(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    with agent_api.session_factory.begin() as db:
+        document = db.get(Document, document_id)
+        assert document is not None
+        document.user_id = agent_api.second_user_id
+    path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    approved = agent_api.client.post(f"{path}/approve", headers=ORIGIN_HEADER)
+    assert approved.status_code == 200
+    resumed = agent_api.client.post(f"{path}/resume", headers=ORIGIN_HEADER)
+    assert resumed.status_code == 200
+    assert "event: run_completed" in resumed.text
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+        stored = db.get(AgentApproval, UUID(approval["id"]))
+        assert stored is not None
+        assert stored.status == "invalidated"
+
+
+def test_agent_deletion_removes_approval_and_prevents_resume(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    deleted = agent_api.client.delete(
+        f"/agents/{agent['id']}",
+        headers=ORIGIN_HEADER,
+    )
+    assert deleted.status_code == 204
+    assert (
+        agent_api.client.post(
+            f"/agents/{agent['id']}/approvals/{approval['id']}/resume",
+            headers=ORIGIN_HEADER,
+        ).status_code
+        == 404
+    )
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+        assert db.get(AgentApproval, UUID(approval["id"])) is None
+
+
+def test_conversation_deletion_removes_its_approval(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, conversation, approval, _document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    deleted = agent_api.client.delete(
+        f"/agents/{agent['id']}/conversations/{conversation['id']}",
+        headers=ORIGIN_HEADER,
+    )
+    assert deleted.status_code == 204
+    assert (
+        agent_api.client.get(
+            f"/agents/{agent['id']}/approvals/{approval['id']}",
+            headers=ORIGIN_HEADER,
+        ).status_code
+        == 404
+    )
+    with agent_api.session_factory() as db:
+        assert db.get(AgentApproval, UUID(approval["id"])) is None
+
+
+def test_inactive_agent_cannot_resume_an_approved_action(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    with agent_api.session_factory.begin() as db:
+        stored_agent = db.get(Agent, agent["id"])
+        assert stored_agent is not None
+        stored_agent.is_active = False
+    path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    assert (
+        agent_api.client.post(f"{path}/approve", headers=ORIGIN_HEADER).status_code
+        == 200
+    )
+    resumed = agent_api.client.post(f"{path}/resume", headers=ORIGIN_HEADER)
+    assert resumed.status_code == 409
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+
+
+def test_modified_approval_arguments_fail_closed(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _conversation, approval, document_id, _model = _start_delete_approval(
+        agent_api,
+        monkeypatch,
+    )
+    with agent_api.session_factory.begin() as db:
+        stored = db.get(AgentApproval, UUID(approval["id"]))
+        assert stored is not None
+        stored.validated_arguments = {"document_id": document_id + 1000}
+    path = f"/agents/{agent['id']}/approvals/{approval['id']}"
+    assert (
+        agent_api.client.post(f"{path}/approve", headers=ORIGIN_HEADER).status_code
+        == 200
+    )
+    resumed = agent_api.client.post(f"{path}/resume", headers=ORIGIN_HEADER)
+    assert resumed.status_code == 200
+    assert '"code":"execution_failed"' in resumed.text
+    with agent_api.session_factory() as db:
+        assert db.get(Document, document_id) is not None
+        assert db.get(AgentApproval, UUID(approval["id"])).status == "approved"
+
+
+def test_stream_reports_approval_pause_for_custom_tool(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _start_delete_approval(agent_api, monkeypatch, streamed=True)

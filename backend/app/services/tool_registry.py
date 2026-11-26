@@ -12,6 +12,7 @@ from app.core.config import Settings, settings
 from app.services.agent_tools import (
     compare_documents,
     delete_document,
+    delete_document_after_approval,
     extract_document_fields,
     generate_research_report,
     get_document_details,
@@ -121,6 +122,7 @@ class ToolRegistration:
 
     metadata: ToolMetadata
     implementation: BaseTool
+    custom_agent_implementation: BaseTool | None = None
 
 
 def _metadata(
@@ -133,6 +135,7 @@ def _metadata(
     requires_human_approval: bool = False,
     required_server_configuration: tuple[ServerConfiguration, ...] = (),
     enabled_for_custom_agents: bool = True,
+    custom_agent_implementation: BaseTool | None = None,
 ) -> ToolRegistration:
     """Bind metadata to a concrete existing tool, never a user-supplied name."""
 
@@ -155,6 +158,7 @@ def _metadata(
             enabled_for_custom_agents=enabled_for_custom_agents,
         ),
         implementation=tool,
+        custom_agent_implementation=custom_agent_implementation,
     )
 
 
@@ -175,6 +179,13 @@ class ToolRegistry:
             if metadata.name != registration.implementation.name:
                 raise InvalidToolConfigurationError(
                     "Tool metadata must match the registered implementation."
+                )
+            if (
+                registration.custom_agent_implementation is not None
+                and metadata.name != registration.custom_agent_implementation.name
+            ):
+                raise InvalidToolConfigurationError(
+                    "Custom tool implementations must keep the registered name."
                 )
             if metadata.name in self._registrations:
                 raise DuplicateToolNameError(
@@ -330,7 +341,11 @@ class ToolRegistry:
                     "An enabled tool is not configured on this server."
                 )
 
-            resolved.append(registration.implementation)
+            resolved.append(
+                registration.custom_agent_implementation
+                if custom_agent and registration.custom_agent_implementation
+                else registration.implementation
+            )
 
         return resolved
 
@@ -400,7 +415,8 @@ TOOL_REGISTRY = ToolRegistry(
             risk_level=ToolRiskLevel.DESTRUCTIVE,
             effect=ToolEffect.SIDE_EFFECTING,
             requires_human_approval=True,
-            enabled_for_custom_agents=False,
+            enabled_for_custom_agents=True,
+            custom_agent_implementation=delete_document_after_approval,
         ),
     ),
     settings_source=settings,

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
+from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -32,6 +34,9 @@ from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import Conversation, User
 from app.schemas import (
+    AgentApprovalDecisionResponse,
+    AgentApprovalListResponse,
+    AgentApprovalSummary,
     AgentConversationCreate,
     AgentConversationListResponse,
     AgentConversationMessagesResponse,
@@ -39,13 +44,21 @@ from app.schemas import (
     AgentConversationResponse,
     AgentCreate,
     AgentExecutionErrorEvent,
+    AgentInvokePendingResponse,
     AgentInvokeRequest,
     AgentInvokeResponse,
     AgentListResponse,
     AgentResponse,
-    AgentRunCompletedEvent,
     AgentStreamEvent,
     AgentUpdate,
+)
+from app.services.agent_approvals import (
+    as_utc,
+    decide_approval,
+    expire_approval,
+    get_owned_approval,
+    list_pending_approvals,
+    public_action_summary,
 )
 from app.services.agent_conversations import (
     checkpoint_messages,
@@ -59,12 +72,14 @@ from app.services.agent_execution import (
     AgentRunCheckpointerUnavailableError,
     AgentRunConversationAccessError,
     AgentRunError,
+    AgentRunInactiveError,
     AgentRunIncompleteConversationError,
     AgentRunRecursionError,
     AgentRunTimeoutError,
     PreparedAgentExecution,
     invoke_agent,
     prepare_agent_execution,
+    prepare_agent_resume,
     stream_agent_events,
 )
 from app.services.agents import (
@@ -132,6 +147,8 @@ def _prepare_or_raise(
 
 
 def _invoke_http_error(error: AgentRunError) -> HTTPException:
+    if isinstance(error, AgentRunInactiveError):
+        return HTTPException(status_code=409, detail="This agent is inactive.")
     if isinstance(error, AgentRunConversationAccessError):
         return HTTPException(status_code=404, detail="Conversation not found.")
     if isinstance(error, AgentRunIncompleteConversationError):
@@ -157,40 +174,11 @@ def _invoke_http_error(error: AgentRunError) -> HTTPException:
     )
 
 
-@router.post(
-    "/{agent_id}/invoke",
-    response_model=AgentInvokeResponse,
-    response_model_exclude_none=True,
-)
-def invoke_custom_agent(
-    data: AgentInvokeRequest,
-    request: Request,
-    agent_id: int = Path(ge=1),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> AgentInvokeResponse:
-    """Run one owner-scoped custom-agent turn."""
-
-    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
-    run = _prepare_or_raise(db, current_user, agent_id, data, checkpointer)
-    try:
-        return invoke_agent(run)
-    except AgentRunError as error:
-        raise _invoke_http_error(error) from None
-
-
-@router.post("/{agent_id}/stream")
-def stream_custom_agent(
-    data: AgentInvokeRequest,
-    request: Request,
-    agent_id: int = Path(ge=1),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+def _streaming_response(
+    request: Request, run: PreparedAgentExecution
 ) -> StreamingResponse:
-    """Stream safe custom-agent events without blocking the ASGI event loop."""
+    """Run the synchronous graph in a bounded worker and stream safe events."""
 
-    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
-    run = _prepare_or_raise(db, current_user, agent_id, data, checkpointer)
     events: queue.Queue[AgentStreamEvent | None] = queue.Queue(maxsize=32)
     cancelled = threading.Event()
 
@@ -208,10 +196,11 @@ def stream_custom_agent(
             for event in stream_agent_events(run, cancelled):
                 if not enqueue(event):
                     return
-                if isinstance(
-                    event,
-                    (AgentRunCompletedEvent, AgentExecutionErrorEvent),
-                ):
+                if event.type in {
+                    "run_completed",
+                    "run_paused",
+                    "error",
+                }:
                     return
         finally:
             enqueue(None)
@@ -256,11 +245,11 @@ def stream_custom_agent(
                 event_name = item.type
                 payload = item.model_dump_json(exclude_none=True)
                 yield f"event: {event_name}\ndata: {payload}\n\n"
-                if isinstance(item, (AgentRunCompletedEvent, AgentExecutionErrorEvent)):
+                if event_name in {"run_completed", "run_paused", "error"}:
                     return
         finally:
-            # If the response closes early, the graph worker checks this flag
-            # between yielded events. Synchronous SDK/tool calls may finish later.
+            # Synchronous provider or tool calls may finish after disconnect;
+            # graph workers check this flag between emitted events.
             cancelled.set()
 
     return StreamingResponse(
@@ -273,6 +262,43 @@ def stream_custom_agent(
     )
 
 
+@router.post(
+    "/{agent_id}/invoke",
+    response_model=AgentInvokeResponse | AgentInvokePendingResponse,
+    response_model_exclude_none=True,
+)
+def invoke_custom_agent(
+    data: AgentInvokeRequest,
+    request: Request,
+    agent_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentInvokeResponse:
+    """Run one owner-scoped custom-agent turn."""
+
+    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
+    run = _prepare_or_raise(db, current_user, agent_id, data, checkpointer)
+    try:
+        return invoke_agent(run)
+    except AgentRunError as error:
+        raise _invoke_http_error(error) from None
+
+
+@router.post("/{agent_id}/stream")
+def stream_custom_agent(
+    data: AgentInvokeRequest,
+    request: Request,
+    agent_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream safe custom-agent events without blocking the ASGI event loop."""
+
+    checkpointer = getattr(request.app.state, "custom_agent_checkpointer", None)
+    run = _prepare_or_raise(db, current_user, agent_id, data, checkpointer)
+    return _streaming_response(request, run)
+
+
 def _conversation_payload(conversation: Conversation) -> AgentConversationResponse:
     return AgentConversationResponse(
         id=conversation.id,
@@ -282,6 +308,154 @@ def _conversation_payload(conversation: Conversation) -> AgentConversationRespon
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
+
+
+def _approval_payload(db: Session, approval) -> AgentApprovalSummary:
+    return AgentApprovalSummary(
+        id=approval.id,
+        agent_id=approval.agent_id,
+        conversation_id=approval.conversation_id,
+        run_id=approval.run_id,
+        tool_name=approval.tool_name,
+        status=approval.status,
+        action_summary=public_action_summary(db, approval),
+        created_at=approval.created_at,
+        expires_at=approval.expires_at,
+        decided_at=approval.decided_at,
+        executed_at=approval.executed_at,
+    )
+
+
+@router.get(
+    "/{agent_id}/approvals",
+    response_model=AgentApprovalListResponse,
+)
+def list_custom_agent_approvals(
+    agent_id: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentApprovalListResponse:
+    get_owned_agent(db, current_user, agent_id)
+    approvals = list_pending_approvals(db, current_user, agent_id)
+    return AgentApprovalListResponse(
+        approvals=[_approval_payload(db, item) for item in approvals],
+        total=len(approvals),
+    )
+
+
+@router.get(
+    "/{agent_id}/approvals/{approval_id}",
+    response_model=AgentApprovalSummary,
+)
+def get_custom_agent_approval(
+    agent_id: int = Path(ge=1),
+    approval_id: UUID = Path(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentApprovalSummary:
+    get_owned_agent(db, current_user, agent_id)
+    approval = get_owned_approval(db, current_user, agent_id, approval_id, lock=True)
+    if approval.status == "pending" and as_utc(approval.expires_at) <= datetime.now(
+        UTC
+    ):
+        expire_approval(db, approval)
+        db.refresh(approval)
+    return _approval_payload(db, approval)
+
+
+def _decide_custom_agent_approval(
+    db: Session,
+    current_user: User,
+    agent_id: int,
+    approval_id: UUID,
+    *,
+    approve: bool,
+) -> AgentApprovalDecisionResponse:
+    get_owned_agent(db, current_user, agent_id)
+    approval = get_owned_approval(db, current_user, agent_id, approval_id)
+    with lock_conversations(db, [approval.conversation_id]):
+        get_owned_agent_conversation(
+            db,
+            current_user,
+            agent_id,
+            approval.conversation_id,
+        )
+        updated = decide_approval(
+            db,
+            current_user,
+            agent_id,
+            approval_id,
+            approve=approve,
+        )
+        return AgentApprovalDecisionResponse(approval=_approval_payload(db, updated))
+
+
+@router.post(
+    "/{agent_id}/approvals/{approval_id}/approve",
+    response_model=AgentApprovalDecisionResponse,
+)
+def approve_custom_agent_action(
+    agent_id: int = Path(ge=1),
+    approval_id: UUID = Path(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentApprovalDecisionResponse:
+    return _decide_custom_agent_approval(
+        db,
+        current_user,
+        agent_id,
+        approval_id,
+        approve=True,
+    )
+
+
+@router.post(
+    "/{agent_id}/approvals/{approval_id}/reject",
+    response_model=AgentApprovalDecisionResponse,
+)
+def reject_custom_agent_action(
+    agent_id: int = Path(ge=1),
+    approval_id: UUID = Path(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentApprovalDecisionResponse:
+    return _decide_custom_agent_approval(
+        db,
+        current_user,
+        agent_id,
+        approval_id,
+        approve=False,
+    )
+
+
+@router.post("/{agent_id}/approvals/{approval_id}/resume")
+def resume_custom_agent_approval(
+    request: Request,
+    agent_id: int = Path(ge=1),
+    approval_id: UUID = Path(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    get_owned_agent(db, current_user, agent_id)
+    approval = get_owned_approval(db, current_user, agent_id, approval_id)
+    if approval.status not in {"approved", "rejected", "expired"}:
+        raise HTTPException(status_code=409, detail="Approval is not ready to resume.")
+    decision = "approve" if approval.status == "approved" else "reject"
+    checkpointer = _required_checkpointer(request)
+    try:
+        run = prepare_agent_resume(
+            db,
+            current_user,
+            agent_id,
+            approval,
+            decision=decision,
+            checkpointer=checkpointer,
+        )
+    except AgentFactoryError as error:
+        raise _factory_http_error(error) from None
+    except AgentRunError as error:
+        raise _invoke_http_error(error) from None
+    return _streaming_response(request, run)
 
 
 def _required_checkpointer(request: Request) -> BaseCheckpointSaver:

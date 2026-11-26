@@ -6,15 +6,17 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.agent_config import validate_model_configuration
 from app.core.model_registry import ModelRegistryError
-from app.models import Agent, Conversation, User
+from app.models import Agent, AgentApproval, Conversation, User
 from app.schemas import AgentCreate, AgentUpdate
+from app.services.agent_guardrails import approval_required
 from app.services.conversations import delete_conversation_thread, lock_conversations
+from app.services.tool_registry import TOOL_REGISTRY
 
 
 def _validate_model_configuration(
@@ -35,6 +37,25 @@ def _validate_model_configuration(
         )
     except ModelRegistryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _validate_approval_configuration(
+    *,
+    memory_enabled: bool,
+    human_approval_required: bool,
+    enabled_tools: list[str],
+) -> None:
+    """Approval pauses need a durable thread, including server-mandated ones."""
+
+    needs_approval = human_approval_required or any(
+        approval_required(TOOL_REGISTRY.get_metadata(name), False)
+        for name in enabled_tools
+    )
+    if needs_approval and not memory_enabled:
+        raise HTTPException(
+            status_code=422,
+            detail="Approval-enabled agents require persistent memory.",
+        )
 
 
 def list_agents(db: Session, user: User) -> list[Agent]:
@@ -72,6 +93,11 @@ def create_agent(db: Session, user: User, data: AgentCreate) -> Agent:
         temperature=data.temperature,
         require_tool_calling=bool(data.enabled_tools),
     )
+    _validate_approval_configuration(
+        memory_enabled=data.memory_enabled,
+        human_approval_required=data.human_approval_required,
+        enabled_tools=data.enabled_tools,
+    )
     agent = Agent(user_id=user.id, **data.model_dump())
     db.add(agent)
 
@@ -106,6 +132,10 @@ def update_agent(
     model_name = changes.get("model_name", agent.model_name)
     temperature = changes.get("temperature", agent.temperature)
     enabled_tools = changes.get("enabled_tools", agent.enabled_tools)
+    memory_enabled = changes.get("memory_enabled", agent.memory_enabled)
+    human_approval_required = changes.get(
+        "human_approval_required", agent.human_approval_required
+    )
     if agent.memory_enabled is True and changes.get("memory_enabled") is False:
         # Conversation creation takes the same agent row lock, so this check
         # cannot race with a new persistent conversation being inserted.
@@ -122,6 +152,11 @@ def update_agent(
         model_name,
         temperature=temperature,
         require_tool_calling=bool(enabled_tools),
+    )
+    _validate_approval_configuration(
+        memory_enabled=memory_enabled,
+        human_approval_required=human_approval_required,
+        enabled_tools=enabled_tools,
     )
 
     for field_name, value in changes.items():
@@ -172,6 +207,12 @@ def delete_agent(
                     checkpointer=checkpointer,
                 )
                 db.delete(conversation)
+            db.execute(
+                delete(AgentApproval).where(
+                    AgentApproval.user_id == user.id,
+                    AgentApproval.agent_id == agent.id,
+                )
+            )
             db.delete(agent)
             db.commit()
         except SQLAlchemyError:

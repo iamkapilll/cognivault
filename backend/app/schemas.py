@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -365,6 +366,49 @@ class AgentInvokeResponse(BaseModel):
     conversation_id: int | None = None
 
 
+class AgentApprovalSummary(BaseModel):
+    id: UUID
+    agent_id: int
+    conversation_id: int
+    run_id: str
+    tool_name: str
+    status: Literal[
+        "pending",
+        "approved",
+        "rejected",
+        "executing",
+        "executed",
+        "expired",
+        "invalidated",
+        "execution_uncertain",
+    ]
+    action_summary: str
+    created_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None = None
+    executed_at: datetime | None = None
+
+
+class AgentApprovalListResponse(BaseModel):
+    approvals: list[AgentApprovalSummary]
+    total: int
+
+
+class AgentApprovalDecisionResponse(BaseModel):
+    approval: AgentApprovalSummary
+
+
+class AgentInvokePendingResponse(BaseModel):
+    run_id: str
+    agent_id: int
+    conversation_id: int
+    status: Literal["approval_required"] = "approval_required"
+    approval: AgentApprovalSummary
+
+
+AgentInvokeResult = AgentInvokeResponse | AgentInvokePendingResponse
+
+
 class AgentRunStartedEvent(BaseModel):
     type: Literal["run_started"] = "run_started"
     run_id: str
@@ -395,6 +439,33 @@ class AgentRunCompletedEvent(BaseModel):
     run_id: str
 
 
+class AgentApprovalRequiredEvent(BaseModel):
+    type: Literal["approval_required"] = "approval_required"
+    run_id: str
+    agent_id: int
+    conversation_id: int
+    approval: AgentApprovalSummary
+
+
+class AgentRunPausedEvent(BaseModel):
+    type: Literal["run_paused"] = "run_paused"
+    run_id: str
+    approval_id: UUID
+
+
+class AgentRunResumedEvent(BaseModel):
+    type: Literal["run_resumed"] = "run_resumed"
+    run_id: str
+    approval_id: UUID
+
+
+class AgentApprovalRejectedEvent(BaseModel):
+    type: Literal["approval_rejected"] = "approval_rejected"
+    run_id: str
+    approval_id: UUID
+    tool_name: str
+
+
 class AgentExecutionErrorEvent(BaseModel):
     type: Literal["error"] = "error"
     run_id: str
@@ -409,6 +480,10 @@ AgentStreamEvent = Annotated[
         | AgentToolStartedEvent
         | AgentToolCompletedEvent
         | AgentRunCompletedEvent
+        | AgentApprovalRequiredEvent
+        | AgentRunPausedEvent
+        | AgentRunResumedEvent
+        | AgentApprovalRejectedEvent
         | AgentExecutionErrorEvent
     ),
     Field(discriminator="type"),
