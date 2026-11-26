@@ -61,7 +61,7 @@ class ModelCapabilities:
     supports_tool_calling: bool
 
 
-ModelBuilder = Callable[[str, str, float], BaseChatModel]
+ModelBuilder = Callable[[str, str, float, float | None], BaseChatModel]
 
 
 @dataclass(frozen=True)
@@ -77,64 +77,80 @@ def _build_groq(
     api_key: str,
     model_name: str,
     temperature: float,
+    request_timeout: float | None,
 ) -> BaseChatModel:
     from langchain_groq import ChatGroq
 
-    return ChatGroq(
-        api_key=api_key,
-        model=model_name,
-        temperature=temperature,
-        max_tokens=1000,
-        streaming=True,
-    )
+    options = {
+        "api_key": api_key,
+        "model": model_name,
+        "temperature": temperature,
+        "max_tokens": 1000,
+        "streaming": True,
+    }
+    if request_timeout is not None:
+        options["request_timeout"] = request_timeout
+    return ChatGroq(**options)
 
 
 def _build_openai(
     api_key: str,
     model_name: str,
     temperature: float,
+    request_timeout: float | None,
 ) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(
-        api_key=api_key,
-        model=model_name,
-        temperature=temperature,
-        max_tokens=1000,
-        streaming=True,
-    )
+    options = {
+        "api_key": api_key,
+        "model": model_name,
+        "temperature": temperature,
+        "max_tokens": 1000,
+        "streaming": True,
+    }
+    if request_timeout is not None:
+        options["request_timeout"] = request_timeout
+    return ChatOpenAI(**options)
 
 
 def _build_anthropic(
     api_key: str,
     model_name: str,
     temperature: float,
+    request_timeout: float | None,
 ) -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic
 
-    return ChatAnthropic(
-        api_key=api_key,
-        model=model_name,
-        temperature=temperature,
-        max_tokens=1000,
-        streaming=True,
-    )
+    options = {
+        "api_key": api_key,
+        "model": model_name,
+        "temperature": temperature,
+        "max_tokens": 1000,
+        "streaming": True,
+    }
+    if request_timeout is not None:
+        options["default_request_timeout"] = request_timeout
+    return ChatAnthropic(**options)
 
 
 def _build_google(
     api_key: str,
     model_name: str,
     temperature: float,
+    request_timeout: float | None,
 ) -> BaseChatModel:
     from langchain_google_genai import ChatGoogleGenerativeAI
 
-    return ChatGoogleGenerativeAI(
-        api_key=api_key,
-        model=model_name,
-        temperature=temperature,
-        max_output_tokens=1000,
-        streaming=True,
-    )
+    options = {
+        "api_key": api_key,
+        "model": model_name,
+        "temperature": temperature,
+        "max_output_tokens": 1000,
+        "streaming": True,
+    }
+    if request_timeout is not None:
+        options["timeout"] = request_timeout
+    return ChatGoogleGenerativeAI(**options)
 
 
 _TOOL_CAPABLE = ModelCapabilities(
@@ -243,6 +259,7 @@ def create_chat_model(
     temperature: float,
     *,
     require_tool_calling: bool = False,
+    request_timeout: float | None = None,
 ) -> BaseChatModel:
     """Create an allowlisted LangChain chat model using server credentials.
 
@@ -264,6 +281,7 @@ def create_chat_model(
             api_key,
             model_name,
             float(temperature),
+            request_timeout,
         )
     except ImportError:
         raise ProviderIntegrationUnavailableError(

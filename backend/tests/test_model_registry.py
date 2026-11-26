@@ -31,6 +31,7 @@ PROVIDER_CASES = [
         "openai/gpt-oss-20b",
         0.35,
         "max_tokens",
+        "request_timeout",
     ),
     (
         "openai",
@@ -40,6 +41,7 @@ PROVIDER_CASES = [
         "gpt-5.6-sol",
         0.4,
         "max_tokens",
+        "request_timeout",
     ),
     (
         "anthropic",
@@ -49,6 +51,7 @@ PROVIDER_CASES = [
         "claude-haiku-4-5-20251001",
         0.6,
         "max_tokens",
+        "default_request_timeout",
     ),
     (
         "google",
@@ -58,6 +61,7 @@ PROVIDER_CASES = [
         "gemini-4-hydrogen",
         0.7,
         "max_output_tokens",
+        "timeout",
     ),
 ]
 
@@ -71,6 +75,7 @@ PROVIDER_CASES = [
         "model_name",
         "temperature",
         "max_tokens_name",
+        "request_timeout_name",
     ),
     PROVIDER_CASES,
 )
@@ -83,6 +88,7 @@ def test_registry_initializes_each_provider_with_its_server_configuration(
     model_name: str,
     temperature: float,
     max_tokens_name: str,
+    request_timeout_name: str,
 ) -> None:
     secret = f"test-only-{provider}-credential"
     monkeypatch.setattr(model_registry.settings, key_setting, secret)
@@ -101,6 +107,7 @@ def test_registry_initializes_each_provider_with_its_server_configuration(
         model_name,
         temperature,
         require_tool_calling=True,
+        request_timeout=37,
     )
 
     assert instance is not None
@@ -110,6 +117,7 @@ def test_registry_initializes_each_provider_with_its_server_configuration(
         "temperature": temperature,
         max_tokens_name: 1000,
         "streaming": True,
+        request_timeout_name: 37,
     }
 
 

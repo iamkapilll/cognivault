@@ -336,15 +336,3 @@ def delete_document(document_id: int) -> str:
             )
 
     return f"Document '{filename}' was deleted successfully."
-
-
-TOOLS = [
-    search_documents,
-    get_document_details,
-    summarize_document,
-    compare_documents,
-    extract_document_fields,
-    search_web,
-    generate_research_report,
-    delete_document,
-]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -14,6 +14,7 @@ from app.core.agent_config import (
     SUPPORTED_AGENT_MODELS,
     validate_model_configuration,
 )
+from app.core.config import settings
 
 
 class DocumentCreate(BaseModel):
@@ -249,3 +250,88 @@ class AgentResponse(BaseModel):
 class AgentListResponse(BaseModel):
     agents: list[AgentResponse]
     total: int
+
+
+class AgentInvokeRequest(BaseModel):
+    """Untrusted user input for one stateless custom-agent run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(
+        min_length=1,
+        max_length=settings.custom_agent_max_message_length,
+    )
+    document_ids: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list,
+        max_length=settings.custom_agent_max_documents,
+    )
+
+    @field_validator("message")
+    @classmethod
+    def reject_blank_message(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("message must not be blank")
+        return value
+
+    @field_validator("document_ids")
+    @classmethod
+    def reject_duplicate_documents(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("document_ids must not contain duplicates")
+        return value
+
+
+class AgentInvokeResponse(BaseModel):
+    run_id: str
+    agent_id: int
+    response: str
+
+
+class AgentRunStartedEvent(BaseModel):
+    type: Literal["run_started"] = "run_started"
+    run_id: str
+    agent_id: int
+
+
+class AgentTextDeltaEvent(BaseModel):
+    type: Literal["text_delta"] = "text_delta"
+    run_id: str
+    text: str
+
+
+class AgentToolStartedEvent(BaseModel):
+    type: Literal["tool_started"] = "tool_started"
+    run_id: str
+    tool_name: str
+
+
+class AgentToolCompletedEvent(BaseModel):
+    type: Literal["tool_completed"] = "tool_completed"
+    run_id: str
+    tool_name: str
+
+
+class AgentRunCompletedEvent(BaseModel):
+    type: Literal["run_completed"] = "run_completed"
+    run_id: str
+
+
+class AgentExecutionErrorEvent(BaseModel):
+    type: Literal["error"] = "error"
+    run_id: str
+    code: str
+    message: str
+
+
+AgentStreamEvent = Annotated[
+    (
+        AgentRunStartedEvent
+        | AgentTextDeltaEvent
+        | AgentToolStartedEvent
+        | AgentToolCompletedEvent
+        | AgentRunCompletedEvent
+        | AgentExecutionErrorEvent
+    ),
+    Field(discriminator="type"),
+]

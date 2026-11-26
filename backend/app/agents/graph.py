@@ -15,7 +15,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.core.config import settings
 from app.core.context import get_context_document_context
-from app.services.agent_tools import TOOLS
+from app.services.tool_registry import TOOL_REGISTRY
 
 load_dotenv()
 
@@ -63,7 +63,10 @@ def build_agent(checkpointer):
         streaming=True,
     )
 
-    llm_with_tools = llm.bind_tools(TOOLS)
+    # Keep the startup graph on the full existing tool set; custom-agent
+    # restrictions are enforced separately by the registry resolver.
+    tools = TOOL_REGISTRY.all_tools()
+    llm_with_tools = llm.bind_tools(tools)
 
     def chatbot(state: MessagesState):
         history = state["messages"][-MAX_HISTORY_MESSAGES:]
@@ -90,7 +93,7 @@ def build_agent(checkpointer):
 
     graph = StateGraph(MessagesState)
     graph.add_node("chatbot", chatbot)
-    graph.add_node("tools", ToolNode(TOOLS))
+    graph.add_node("tools", ToolNode(tools))
 
     graph.add_edge(START, "chatbot")
     graph.add_conditional_edges("chatbot", tools_condition)

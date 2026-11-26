@@ -71,6 +71,17 @@ class Settings:
         self.tesseract_cmd = os.getenv("TESSERACT_CMD", "")
         self.login_rate_limit = _as_int("LOGIN_RATE_LIMIT", 5)
         self.login_rate_window_seconds = _as_int("LOGIN_RATE_WINDOW_SECONDS", 900)
+        # Custom-agent runtime limits are deliberately bounded again in
+        # validate(); environment configuration must not disable safeguards.
+        self.custom_agent_max_message_length = _as_int(
+            "CUSTOM_AGENT_MAX_MESSAGE_LENGTH", 4000
+        )
+        self.custom_agent_max_documents = _as_int("CUSTOM_AGENT_MAX_DOCUMENTS", 20)
+        self.custom_agent_execution_timeout_seconds = _as_int(
+            "CUSTOM_AGENT_EXECUTION_TIMEOUT_SECONDS", 90
+        )
+        self.custom_agent_recursion_limit = _as_int("CUSTOM_AGENT_RECURSION_LIMIT", 16)
+        self.custom_agent_max_concurrency = _as_int("CUSTOM_AGENT_MAX_CONCURRENCY", 4)
         self.is_production = _as_bool("PRODUCTION", False)
 
     def validate(self) -> None:
@@ -80,6 +91,26 @@ class Settings:
             raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters.")
         if self.is_production and not self.cookie_secure:
             raise RuntimeError("COOKIE_SECURE must be true when PRODUCTION=true.")
+        limits = (
+            (
+                "CUSTOM_AGENT_MAX_MESSAGE_LENGTH",
+                self.custom_agent_max_message_length,
+                1,
+                10_000,
+            ),
+            ("CUSTOM_AGENT_MAX_DOCUMENTS", self.custom_agent_max_documents, 0, 20),
+            (
+                "CUSTOM_AGENT_EXECUTION_TIMEOUT_SECONDS",
+                self.custom_agent_execution_timeout_seconds,
+                1,
+                600,
+            ),
+            ("CUSTOM_AGENT_RECURSION_LIMIT", self.custom_agent_recursion_limit, 2, 100),
+            ("CUSTOM_AGENT_MAX_CONCURRENCY", self.custom_agent_max_concurrency, 1, 16),
+        )
+        for name, value, minimum, maximum in limits:
+            if not minimum <= value <= maximum:
+                raise RuntimeError(f"{name} must be between {minimum} and {maximum}.")
 
 
 settings = Settings()

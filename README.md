@@ -272,6 +272,11 @@ The backend reads these settings from `backend/.env` (see the complete safe temp
 | `TESSERACT_CMD` | OCR on Windows | Optional full path to `tesseract.exe`; empty uses `PATH`. |
 | `LOGIN_RATE_LIMIT` | No | Login attempts allowed in the configured window; default `5`. |
 | `LOGIN_RATE_WINDOW_SECONDS` | No | Login rate-limit window; default `900`. |
+| `CUSTOM_AGENT_MAX_MESSAGE_LENGTH` | No | Maximum custom-agent input characters; default `4000` (maximum allowed setting `10000`). |
+| `CUSTOM_AGENT_MAX_DOCUMENTS` | No | Maximum selected documents per custom-agent run; default `20` (maximum allowed setting `20`). |
+| `CUSTOM_AGENT_EXECUTION_TIMEOUT_SECONDS` | No | Custom-agent execution and provider request deadline; default `90`, allowed range `1`–`600`. |
+| `CUSTOM_AGENT_RECURSION_LIMIT` | No | LangGraph step limit for custom agents; default `16`, allowed range `2`–`100`. |
+| `CUSTOM_AGENT_MAX_CONCURRENCY` | No | Maximum concurrent LangGraph tool calls; default `4`, allowed range `1`–`16`. |
 | `PRODUCTION` | No | Set `true` in production; requires `COOKIE_SECURE=true`. |
 | `BACKEND_INTERNAL_URL` | Docker build | Frontend build-time rewrite target; Compose sets `http://backend:8000`. |
 
@@ -307,6 +312,108 @@ FastAPI routes are **not currently versioned**, except for the `/api/v1/health` 
 | `POST` | `/agent/chat` | Run an agent interaction without streaming |
 | `POST` | `/agent/chat/stream` | Stream tokens, tool events, approvals, and completion over SSE |
 | `POST` | `/agent/approve` | Approve or reject a pending agent action |
+| `POST` | `/agents/{agent_id}/invoke` | Execute one stateless custom-agent request |
+| `POST` | `/agents/{agent_id}/stream` | Stream one stateless custom-agent run as typed SSE events |
+
+## Custom agent execution
+
+Custom-agent execution is separate from the startup-built `/agent/chat` graph. Each request authenticates the session cookie, retrieves the saved agent through the owner-scoped service, validates its persisted provider/model/tool configuration, checks every selected document belongs to the caller, and builds an ephemeral graph through the dynamic factory. Trusted user and document context is set only around graph work and reset in a `finally` block. The custom graph has no checkpointer.
+
+Only stateless agents are currently executable: set `memory_enabled` and `human_approval_required` to `false`, keep `is_active` true, and enable only tools shown by the server-side registry. Destructive document deletion is unavailable to custom agents because its approval/resume lifecycle is not implemented. An agent with no tools is supported.
+
+### Invoke request and response
+
+`POST /agents/{agent_id}/invoke` accepts JSON such as:
+
+```json
+{
+  "message": "Summarize the selected report and identify its main risks.",
+  "document_ids": [12]
+}
+```
+
+`document_ids` is optional and defaults to an empty list. IDs must be positive, unique, owned by the authenticated user, and within the configured count limit. The response contains only the final assistant answer:
+
+```json
+{
+  "run_id": "c47bcacf-a2df-4fdc-9e4e-93915157c334",
+  "agent_id": 8,
+  "response": "The report identifies three primary risks..."
+}
+```
+
+The endpoint returns `401` for an invalid session, `403` for an invalid or missing write Origin, `404` for an agent or selected document the user cannot access, `409` for an inactive agent, `422` for invalid configuration/input or unsupported memory/approval, `503` for an unavailable provider/tool, `502` for a run failure, and `504` when execution exceeds its deadline. Error bodies are sanitized.
+
+### Streaming events
+
+`POST /agents/{agent_id}/stream` accepts the same body and returns `text/event-stream`. Each event has a named SSE event and JSON data with a matching `type` field:
+
+```text
+event: run_started
+data: {"type":"run_started","run_id":"...","agent_id":8}
+
+event: text_delta
+data: {"type":"text_delta","run_id":"...","text":"The report "}
+
+event: tool_started
+data: {"type":"tool_started","run_id":"...","tool_name":"search_documents"}
+
+event: tool_completed
+data: {"type":"tool_completed","run_id":"...","tool_name":"search_documents"}
+
+event: text_delta
+data: {"type":"text_delta","run_id":"...","text":"identifies three primary risks..."}
+
+event: run_completed
+data: {"type":"run_completed","run_id":"..."}
+```
+
+The event types are `run_started`, `text_delta`, `tool_started`, `tool_completed`, `run_completed`, and `error`. Tool arguments, tool results, model reasoning, prompts, and credentials are never placed in events. Completion does not repeat the text already sent in deltas. A run failure after streaming begins becomes a generic `error` event with a stable code.
+
+### Browser calls and CSRF
+
+Use the same-origin Next.js backend proxy so the browser sends the HttpOnly session cookie. Browser requests must include credentials; the browser supplies the `Origin` header checked by the API’s existing CSRF middleware. Do not set a user ID or trust client-provided identity.
+
+```ts
+const response = await fetch(`/backend/agents/${agentId}/invoke`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ message, document_ids: [12] }),
+});
+```
+
+For streaming, use `fetch` with the same request options, then read `response.body` with a `ReadableStream` reader and parse the standard SSE `event:` and `data:` lines. Native `EventSource` does not support a JSON POST body.
+
+To test manually, start the backend, log in to an existing account to capture its cookie, create a stateless custom agent, then call either execution route. Keep the same allowed `Origin` on write requests:
+
+```bash
+curl -c agent-cookies.txt -X POST http://localhost:8000/auth/login \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password"}'
+
+curl -b agent-cookies.txt -X POST http://localhost:8000/agents \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -d '{"name":"Research helper","system_prompt":"Answer with concise evidence-based findings.","model_provider":"groq","model_name":"openai/gpt-oss-20b","temperature":0.2,"enabled_tools":[],"memory_enabled":false,"human_approval_required":false,"is_active":true}'
+
+curl -b agent-cookies.txt -X POST http://localhost:8000/agents/AGENT_ID/invoke \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -d '{"message":"Summarize the latest project notes.","document_ids":[]}'
+
+curl -N -b agent-cookies.txt -X POST http://localhost:8000/agents/AGENT_ID/stream \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -d '{"message":"Summarize the latest project notes.","document_ids":[]}'
+```
+
+Replace `AGENT_ID` with the ID returned when the agent is created. Configure the selected provider credential in `backend/.env`; all calls above use the server-managed key.
+
+### Limits and security considerations
+
+The defaults are 4,000 message characters, 20 selected documents, a 90-second execution/provider request timeout, a 16-step LangGraph recursion limit, and at most 4 concurrent tool calls. Each setting is configurable through the `CUSTOM_AGENT_*` environment variables above and checked against a server-side range. These controls do not replace production rate limiting, quotas, or provider spend controls.
+
+Invocation and streaming run synchronous LangGraph/provider/tool work in worker threads so they do not block the ASGI event loop. Model SDK request timeouts and a server-side execution deadline are configured. Python cannot forcibly terminate a synchronous SDK or external tool call already in progress; after a client disconnect or deadline, cancellation is cooperative between graph events and a daemon worker may continue until that call returns. Tool concurrency remains bounded by LangGraph's `max_concurrency` setting.
+
+Document content selected for a run can be sent to the configured model provider. Web/research tools can send query text to Tavily, and summarization/comparison/report tools may send extracted document content to the configured Groq service. Keep provider data-retention terms in mind and enable only tools needed for the agent. Retrieved document and web text are treated as untrusted input, but prompt-injection risks cannot be eliminated by prompt instructions alone; SQL ownership checks and the server tool allowlist remain the authorization boundary.
 
 ## How document Q&A and the agent work
 

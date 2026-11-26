@@ -7,7 +7,13 @@ from dataclasses import dataclass
 
 import pytest
 from fastapi import HTTPException
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy import create_engine
@@ -26,11 +32,13 @@ from app.agents.factory import (
     build_agent_for_user,
 )
 from app.core.agent_config import DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER
+from app.core.config import settings
 from app.core.context import current_document_context, current_user_id
 from app.database import Base
 from app.models import Agent, Document, User
 from app.services import agent_tools
 from app.services.agent_tools import get_document_details
+from app.services.tool_registry import TOOL_REGISTRY, ToolRegistry
 
 
 @dataclass
@@ -78,6 +86,42 @@ class FakeToolCallingChatModel(FakeChatModel):
                 ],
             )
         return AIMessage(content="Mocked response after tool call")
+
+
+class StreamingFakeToolCallingModel(FakeChatModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.invocation_count = 0
+
+    def stream(self, messages: Sequence[BaseMessage]) -> Iterator[AIMessageChunk]:
+        self.messages = list(messages)
+        self.invocation_count += 1
+        if self.invocation_count == 1:
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "name": "get_document_details",
+                        "args": '{"document_id": 1}',
+                        "id": "streamed-call-1",
+                        "index": 0,
+                        "type": "tool_call_chunk",
+                    }
+                ],
+            )
+        else:
+            yield AIMessageChunk(content="The file is completed.")
+
+
+class StreamingFakeChatModel(FakeChatModel):
+    def stream(self, messages: Sequence[BaseMessage]) -> Iterator[AIMessageChunk]:
+        self.messages = list(messages)
+        yield AIMessageChunk(content="Incremental ")
+        yield AIMessageChunk(
+            content="private reasoning",
+            additional_kwargs={"reasoning": "private"},
+        )
+        yield AIMessageChunk(content="custom response.")
 
 
 @pytest.fixture
@@ -220,7 +264,7 @@ def test_dynamic_factory_routes_each_provider_through_the_registry(
     model_name: str,
     key_setting: str,
 ) -> None:
-    monkeypatch.setattr(factory.settings, key_setting, f"test-{provider}-key")
+    monkeypatch.setattr(settings, key_setting, f"test-{provider}-key")
     agent = save_agent(
         agent_factory_database.session,
         agent_factory_database.owner,
@@ -323,6 +367,86 @@ def test_agent_without_tools_compiles_without_a_tool_node(
 
     assert fake_chat_models[0].bound_tools is None
     assert "tools" not in graph.get_graph().nodes
+
+
+def test_custom_agent_graph_streams_provider_chunks_incrementally(
+    agent_factory_database: AgentFactoryDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = save_agent(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        enabled_tools=[],
+    )
+    model = StreamingFakeChatModel()
+    monkeypatch.setattr(factory, "create_chat_model", lambda *_args, **_kwargs: model)
+    graph = build_agent_for_user(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        agent.id,
+    )
+    user_token = current_user_id.set(agent_factory_database.owner.id)
+    try:
+        chunks = []
+        final_messages = []
+        for mode, payload in graph.stream(
+            {"messages": [HumanMessage(content="Write an answer")]},
+            stream_mode=["custom", "messages", "updates"],
+        ):
+            if mode == "custom":
+                if payload.get("cognivault_event") == "text_delta":
+                    chunks.append(payload["text"])
+                continue
+            if mode == "updates":
+                final_messages.extend(payload.get("chatbot", {}).get("messages", []))
+    finally:
+        current_user_id.reset(user_token)
+
+    assert chunks == ["Incremental ", "custom response."]
+    assert not any(
+        "private reasoning" in str(message.content) for message in final_messages
+    )
+
+
+def test_streamed_model_tool_calls_still_execute_through_authorized_tool_node(
+    agent_factory_database: AgentFactoryDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = Document(
+        user_id=agent_factory_database.owner.id,
+        filename="streamed-owned.pdf",
+        status="completed",
+    )
+    agent_factory_database.session.add(document)
+    agent_factory_database.session.commit()
+    agent_factory_database.session.refresh(document)
+    agent = save_agent(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        enabled_tools=["get_document_details"],
+    )
+    model = StreamingFakeToolCallingModel()
+    monkeypatch.setattr(factory, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(
+        agent_tools,
+        "SessionLocal",
+        agent_factory_database.session_factory,
+    )
+    graph = build_agent_for_user(
+        agent_factory_database.session,
+        agent_factory_database.owner,
+        agent.id,
+    )
+
+    result = invoke_as_user(graph, agent_factory_database.owner.id)
+    tool_messages = [
+        message for message in result["messages"] if message.type == "tool"
+    ]
+
+    assert model.invocation_count == 2
+    assert len(tool_messages) == 1
+    assert "streamed-owned.pdf" in tool_messages[0].content
+    assert result["messages"][-1].content == "The file is completed."
 
 
 def test_request_document_context_is_preserved_in_agent_prompt(
@@ -536,7 +660,7 @@ def test_unallowlisted_persisted_tool_is_rejected(
     assert fake_chat_models == []
 
 
-def test_allowlisted_but_unavailable_tool_is_rejected(
+def test_saved_tool_missing_from_current_registry_is_rejected(
     agent_factory_database: AgentFactoryDatabase,
     fake_chat_models: list[FakeChatModel],
     monkeypatch: pytest.MonkeyPatch,
@@ -548,11 +672,17 @@ def test_allowlisted_but_unavailable_tool_is_rejected(
     )
     monkeypatch.setattr(
         factory,
-        "TOOLS",
-        [tool for tool in factory.TOOLS if tool.name != "get_document_details"],
+        "TOOL_REGISTRY",
+        ToolRegistry(
+            [
+                TOOL_REGISTRY.get_registration(name)
+                for name in TOOL_REGISTRY.names()
+                if name != "get_document_details"
+            ]
+        ),
     )
 
-    with pytest.raises(UnavailableAgentToolError):
+    with pytest.raises(InvalidAgentConfigurationError):
         build_agent_for_user(
             agent_factory_database.session,
             agent_factory_database.owner,
@@ -572,7 +702,7 @@ def test_web_tool_is_unavailable_without_tavily_configuration(
         agent_factory_database.owner,
         enabled_tools=["search_web"],
     )
-    monkeypatch.setattr(factory.settings, "tavily_api_key", "")
+    monkeypatch.setattr(settings, "tavily_api_key", "")
 
     with pytest.raises(UnavailableAgentToolError):
         build_agent_for_user(
@@ -593,7 +723,7 @@ def test_agent_construction_rejects_missing_server_groq_key(
         agent_factory_database.session,
         agent_factory_database.owner,
     )
-    monkeypatch.setattr(factory.settings, "groq_api_key", "")
+    monkeypatch.setattr(settings, "groq_api_key", "")
 
     with pytest.raises(UnavailableAgentProviderError):
         build_agent_for_user(
