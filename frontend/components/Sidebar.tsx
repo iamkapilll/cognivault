@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Aperture,
+  Bot,
   Search,
   FileStack,
   LogOut,
@@ -154,6 +155,7 @@ export default function Sidebar({
 
   const navItems = [
     { href: "/agent", label: "AI Workspace", icon: MessageSquareText },
+    { href: "/agents", label: "My Agents", icon: Bot },
     { href: "/", label: "Documents", icon: FileStack },
     { href: "/research", label: "AI Research", icon: Sparkles },
     { href: "/settings", label: "Settings", icon: Settings2 },
@@ -210,7 +212,9 @@ export default function Sidebar({
           const active =
             item.href === "/"
               ? pathname === "/"
-              : pathname.startsWith(item.href);
+              : item.href === "/agent"
+                ? pathname === "/agent"
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
 
           return (

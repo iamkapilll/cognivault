@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.agent_config import DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER
+from app.core.config import settings
+from app.core.model_registry import MODEL_REGISTRY
 from app.core.security import COOKIE_NAME, create_access_token, hash_password
 from app.database import Base, get_db
 from app.main import app
@@ -23,6 +25,7 @@ from app.models import Agent, AgentApproval, AuthSession, Conversation, Document
 from app.routers import documents as documents_router
 from app.routers import rag as rag_router
 from app.services import uploads
+from app.services.tool_registry import TOOL_REGISTRY
 
 ORIGIN_HEADER = {"Origin": "http://localhost:3000"}
 
@@ -493,3 +496,49 @@ def test_partial_patch_rejects_a_model_provider_mismatch(
     unchanged = agent_api.client.get(f"/agents/{created['id']}").json()
     assert unchanged["model_provider"] == DEFAULT_AGENT_PROVIDER
     assert unchanged["model_name"] == DEFAULT_AGENT_MODEL
+
+
+def test_agent_metadata_requires_authentication(agent_api: AgentTestClient) -> None:
+    response = agent_api.client.get("/agents/metadata")
+
+    assert response.status_code == 401
+
+
+def test_agent_metadata_is_derived_from_registries_without_exposing_credentials(
+    agent_api: AgentTestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "gsk_test_metadata_secret_that_must_not_be_returned"
+    monkeypatch.setattr(settings, "groq_api_key", secret)
+    agent_api.authenticate(agent_api.first_user_id)
+
+    response = agent_api.client.get("/agents/metadata")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert secret not in response.text
+    providers = {item["provider"]: item for item in body["providers"]}
+    assert set(providers) == set(MODEL_REGISTRY)
+    assert providers["groq"]["available"] is True
+    assert {item["model_name"] for item in providers["groq"]["models"]} == set(
+        MODEL_REGISTRY["groq"].models
+    )
+    for provider, definition in MODEL_REGISTRY.items():
+        reported = providers[provider]
+        for model in reported["models"]:
+            capabilities = definition.models[model["model_name"]]
+            assert model["supports_tool_calling"] is capabilities.supports_tool_calling
+            assert model["temperature_min"] == capabilities.temperature_range[0]
+            assert model["temperature_max"] == capabilities.temperature_range[1]
+
+    tools = {item["name"]: item for item in body["tools"]}
+    assert set(tools) == set(TOOL_REGISTRY.names())
+    delete_tool = tools["delete_document"]
+    assert delete_tool["requires_human_approval"] is True
+    assert delete_tool["requires_memory"] is True
+    assert delete_tool["availability_status"] == "approval_unavailable"
+    high_risk_tool = tools["generate_research_report"]
+    assert high_risk_tool["requires_human_approval"] is True
+    assert high_risk_tool["availability_status"] == "approval_unavailable"
+    assert body["default_temperature"] == 0.2
+    assert "GROQ_API_KEY" not in response.text

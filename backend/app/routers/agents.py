@@ -30,13 +30,21 @@ from app.agents.factory import (
     UnavailableAgentToolError,
     UnsupportedAgentCapabilityError,
 )
+from app.core.agent_config import (
+    DEFAULT_AGENT_MODEL,
+    DEFAULT_AGENT_PROVIDER,
+    DEFAULT_AGENT_TEMPERATURE,
+)
+from app.core.config import settings
 from app.core.dependencies import get_current_user
+from app.core.model_registry import MODEL_REGISTRY
 from app.database import get_db
 from app.models import Conversation, User
 from app.schemas import (
     AgentApprovalDecisionResponse,
     AgentApprovalListResponse,
     AgentApprovalSummary,
+    AgentConfigurationMetadata,
     AgentConversationCreate,
     AgentConversationListResponse,
     AgentConversationMessagesResponse,
@@ -48,8 +56,11 @@ from app.schemas import (
     AgentInvokeRequest,
     AgentInvokeResponse,
     AgentListResponse,
+    AgentModelMetadata,
+    AgentProviderMetadata,
     AgentResponse,
     AgentStreamEvent,
+    AgentToolMetadata,
     AgentUpdate,
 )
 from app.services.agent_approvals import (
@@ -82,6 +93,7 @@ from app.services.agent_execution import (
     prepare_agent_resume,
     stream_agent_events,
 )
+from app.services.agent_guardrails import approval_required
 from app.services.agents import (
     create_agent,
     delete_agent,
@@ -90,6 +102,11 @@ from app.services.agents import (
     update_agent,
 )
 from app.services.conversations import conversation_document_ids, lock_conversations
+from app.services.tool_registry import (
+    TOOL_REGISTRY,
+    AuthenticationRequirement,
+    ToolAvailabilityStatus,
+)
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -643,6 +660,84 @@ def list_agents_endpoint(
 ) -> AgentListResponse:
     agents = list_agents(db, current_user)
     return AgentListResponse(agents=agents, total=len(agents))
+
+
+@router.get("/metadata", response_model=AgentConfigurationMetadata)
+def get_agent_configuration_metadata(
+    request: Request,
+    _current_user: User = Depends(get_current_user),
+) -> AgentConfigurationMetadata:
+    """Return safe, server-derived choices for the custom-agent editor."""
+
+    provider_labels = {
+        "groq": "Groq",
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "google": "Google Gemini",
+    }
+    providers: list[AgentProviderMetadata] = []
+    for provider, definition in MODEL_REGISTRY.items():
+        credential = getattr(settings, definition.credential_setting, "")
+        available = isinstance(credential, str) and bool(credential.strip())
+        providers.append(
+            AgentProviderMetadata(
+                provider=provider,
+                display_name=provider_labels.get(provider, provider.title()),
+                available=available,
+                availability_status=(
+                    "available" if available else "missing_configuration"
+                ),
+                models=[
+                    AgentModelMetadata(
+                        model_name=model_name,
+                        supports_tool_calling=capabilities.supports_tool_calling,
+                        temperature_min=capabilities.temperature_range[0],
+                        temperature_max=capabilities.temperature_range[1],
+                    )
+                    for model_name, capabilities in definition.models.items()
+                ],
+            )
+        )
+
+    approval_runtime_available = (
+        getattr(request.app.state, "custom_agent_checkpointer", None) is not None
+    )
+    tools: list[AgentToolMetadata] = []
+    for metadata in TOOL_REGISTRY.list_tools():
+        mandatory_approval = approval_required(metadata, False)
+        availability = TOOL_REGISTRY.get_availability(
+            metadata.name,
+            custom_agent=True,
+            human_approval_available=approval_runtime_available,
+        )
+        if mandatory_approval and not approval_runtime_available:
+            availability = ToolAvailabilityStatus.APPROVAL_UNAVAILABLE
+        tools.append(
+            AgentToolMetadata(
+                name=metadata.name,
+                display_name=metadata.display_name,
+                description=metadata.description,
+                category=metadata.category.value,
+                risk_level=metadata.risk_level.value,
+                effect=metadata.effect.value,
+                requires_authenticated_user=(
+                    metadata.authentication
+                    is AuthenticationRequirement.AUTHENTICATED_USER
+                ),
+                requires_human_approval=mandatory_approval,
+                requires_memory=mandatory_approval,
+                available=availability is ToolAvailabilityStatus.AVAILABLE,
+                availability_status=availability.value,
+            )
+        )
+
+    return AgentConfigurationMetadata(
+        providers=providers,
+        tools=tools,
+        default_model_provider=DEFAULT_AGENT_PROVIDER,
+        default_model_name=DEFAULT_AGENT_MODEL,
+        default_temperature=DEFAULT_AGENT_TEMPERATURE,
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)

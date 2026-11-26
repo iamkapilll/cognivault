@@ -18,6 +18,55 @@
   --error: #f87171;
   --foreground: #fafafa;
   --shadow-panel: 0 16px 40px -28px rgb(0 0 0 / 72%);
+  --selection-background: rgb(250 250 250 / 20%);
+  --font-ui: "Segoe UI", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-code: "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+/* The existing token system can follow the user's color preference or an
+   explicit data-theme attribute without page-specific hard-coded colors. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --background: #f7f7f8;
+    --sidebar: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f1f1f2;
+    --surface-3: #e9e9eb;
+    --border: #e4e4e7;
+    --border-strong: #d4d4d8;
+    --muted: #71717a;
+    --muted-strong: #52525b;
+    --accent: #18181b;
+    --accent-2: #27272a;
+    --accent-strong: #27272a;
+    --success: #15803d;
+    --error: #b91c1c;
+    --foreground: #18181b;
+    --shadow-panel: 0 16px 40px -30px rgb(24 24 27 / 24%);
+    --selection-background: rgb(24 24 27 / 16%);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f7f7f8;
+  --sidebar: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f1f1f2;
+  --surface-3: #e9e9eb;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --muted: #71717a;
+  --muted-strong: #52525b;
+  --accent: #18181b;
+  --accent-2: #27272a;
+  --accent-strong: #27272a;
+  --success: #15803d;
+  --error: #b91c1c;
+  --foreground: #18181b;
+  --shadow-panel: 0 16px 40px -30px rgb(24 24 27 / 24%);
+  --selection-background: rgb(24 24 27 / 16%);
 }
 
 @theme inline {
@@ -35,8 +84,8 @@
   --color-success: var(--success);
   --color-error: var(--error);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
 }
 
 @layer base {
@@ -50,12 +99,12 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui);
   min-height: 100vh;
 }
 
 ::selection {
-  background: rgb(250 250 250 / 20%);
+  background: var(--selection-background);
 }
 
 ::-webkit-scrollbar {
@@ -80,7 +129,7 @@ body {
 @layer components {
   .app-topbar {
     border-bottom: 1px solid var(--border);
-    background: rgb(10 10 10 / 94%);
+    background: color-mix(in srgb, var(--background) 94%, transparent);
     backdrop-filter: blur(16px);
   }
 
@@ -237,7 +286,7 @@ body {
   background: var(--surface-2);
   padding: 0.15rem 0.35rem;
   border-radius: 0.3rem;
-  font-family: var(--font-geist-mono), monospace;
+  font-family: var(--font-code);
   font-size: 0.85em;
 }
 

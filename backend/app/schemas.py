@@ -12,6 +12,7 @@ from app.core.agent_config import (
     ALLOWED_AGENT_TOOLS,
     DEFAULT_AGENT_MODEL,
     DEFAULT_AGENT_PROVIDER,
+    DEFAULT_AGENT_TEMPERATURE,
     SUPPORTED_AGENT_MODELS,
     validate_model_configuration,
 )
@@ -92,7 +93,7 @@ class AgentCreate(BaseModel):
         min_length=1,
         max_length=120,
     )
-    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    temperature: float = Field(default=DEFAULT_AGENT_TEMPERATURE, ge=0.0, le=2.0)
     enabled_tools: list[str] = Field(
         default_factory=list,
         max_length=len(ALLOWED_AGENT_TOOLS),
@@ -251,6 +252,43 @@ class AgentResponse(BaseModel):
 class AgentListResponse(BaseModel):
     agents: list[AgentResponse]
     total: int
+
+
+class AgentModelMetadata(BaseModel):
+    model_name: str
+    supports_tool_calling: bool
+    temperature_min: float
+    temperature_max: float
+
+
+class AgentProviderMetadata(BaseModel):
+    provider: str
+    display_name: str
+    available: bool
+    availability_status: str
+    models: list[AgentModelMetadata]
+
+
+class AgentToolMetadata(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    category: str
+    risk_level: str
+    effect: str
+    requires_authenticated_user: bool
+    requires_human_approval: bool
+    requires_memory: bool
+    available: bool
+    availability_status: str
+
+
+class AgentConfigurationMetadata(BaseModel):
+    providers: list[AgentProviderMetadata]
+    tools: list[AgentToolMetadata]
+    default_model_provider: str
+    default_model_name: str
+    default_temperature: float
 
 
 class AgentConversationCreate(BaseModel):

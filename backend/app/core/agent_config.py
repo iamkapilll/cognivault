@@ -10,12 +10,15 @@ from app.core.model_registry import (
 )
 from app.services.tool_registry import ALLOWED_AGENT_TOOLS
 
+DEFAULT_AGENT_TEMPERATURE = 0.2
+
 # Re-export model defaults and validation alongside the agent tool allowlist so
 # existing schemas and services keep one stable configuration import path.
 __all__ = [
     "ALLOWED_AGENT_TOOLS",
     "DEFAULT_AGENT_MODEL",
     "DEFAULT_AGENT_PROVIDER",
+    "DEFAULT_AGENT_TEMPERATURE",
     "SUPPORTED_AGENT_MODELS",
     "validate_model_configuration",
 ]

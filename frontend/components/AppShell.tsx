@@ -15,6 +15,7 @@ import Sidebar from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthGuard";
 
 function pageTitle(pathname: string): string {
+  if (pathname === "/agents" || pathname.startsWith("/agents/")) return "My Agents";
   if (pathname.startsWith("/agent")) return "AI Workspace";
   if (pathname.startsWith("/research")) return "AI Research";
   if (pathname.startsWith("/settings")) return "Settings";
